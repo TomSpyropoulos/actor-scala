@@ -11,9 +11,8 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
-import scala.concurrent.Future
+import scala.concurrent.{Future, Await}
 import scala.concurrent.duration.DurationInt
-
 object Main {
   def main(args: Array[String]): Unit = {
     implicit val system: ActorSystem = ActorSystem("publisher")
@@ -21,7 +20,7 @@ object Main {
 
     // Create connection settings
     val connectionSettings = MqttConnectionSettings(
-      "tcp://mosquitto:1883",
+      "tcp://localhost:1883",
       "test-publisher",
       new MemoryPersistence
     )
@@ -31,8 +30,8 @@ object Main {
       MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
 
     // Create a source of infinite messages
-    val tickerSource = Source.tick(1.second, 100.millis, "payload")
-    val mqttSource = tickerSource
+    lazy val tickerSource = Source.tick(1.second, 100.millis, "payload")
+    lazy val mqttSource = tickerSource
       .wireTap(payload => println(s"Payload created: $payload"))
       .map { payload =>
         MqttMessage("your/topic", ByteString(payload))
@@ -41,6 +40,9 @@ object Main {
     // Connect to the existing sink
     val control = mqttSource.runWith(sink)
 
-    // sys.addShutdownHook(system.terminate())
+    // Wait for the stream to finish, then terminate the ActorSystem
+    Await.result(control, 5.seconds)
+    system.terminate()
+    Await.result(system.whenTerminated, 5.seconds)
   }
 }
