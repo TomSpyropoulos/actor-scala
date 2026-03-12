@@ -1,4 +1,6 @@
-.bloop/
-.metals/
-target/
-project/
+*/.bloop/
+*/.metals/
+*/.bsp/
+*/target/
+*/project/target/
+*/project/project/
