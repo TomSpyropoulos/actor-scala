@@ -6,7 +6,7 @@ The subscriber subscribes to the wildcard topic sensor, and for each different t
 
 ## Pekko executors: Fork-Join vs Virtual Threads
 
-In the default implemention of the actor dispatcher (scheduler) the actor are dispatched on an executor called ForkJoinPool (which is similar to an event loop). Each actor represents a task object that is pushed unto a deque of tasks that is executed on a platform thread.
+In the default implemention of the actor dispatcher (scheduler) the actors are dispatched on an executor called fork-join-executor (which is similar to an event loop). Each actor represents a task object that is pushed unto a deque of tasks that is executed on a platform thread.
 This means that if the actor blocks waiting for example for IO, then the underlying platform thread is also blocked. An alternative executor more closely resembling Erlang's and Elixir's genserver can be implemented by using an executor based on virtual threads.
 
 In Java 21, virtual threads where introduced. It is a lightweight thread that is managed by the runtime (similar to goroutines in golang), that can block and because it is managed by the runtime, it can be unpinned from the platform thread.
