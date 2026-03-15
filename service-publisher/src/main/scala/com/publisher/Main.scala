@@ -13,14 +13,24 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
 import scala.concurrent.{Future, Await}
 import scala.concurrent.duration.DurationInt
+import scala.util.Random
+import java.time.Instant
 object Main {
+
+  def data(): String = {
+    val deviceName = "sensor01"
+    val timestampz = Instant.now().toString
+    val value = Random().nextInt(10) + 1
+    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": "$value"}"""
+  }
+
   def main(args: Array[String]): Unit = {
     implicit val system: ActorSystem = ActorSystem("publisher")
     implicit val ec = system.dispatcher
 
     // Create connection settings
     val connectionSettings = MqttConnectionSettings(
-      "tcp://localhost:1883",
+      "tcp://mosquitto:1883",
       "test-publisher",
       new MemoryPersistence
     )
@@ -30,12 +40,14 @@ object Main {
       MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
 
     // Create a source of infinite messages
-    lazy val tickerSource = Source.tick(1.second, 100.millis, "payload")
-    lazy val mqttSource = tickerSource
-      .wireTap(payload => println(s"Payload created: $payload"))
-      .map { payload =>
-        MqttMessage("your/topic", ByteString(payload))
-      }
+    lazy val mqttSource =
+      Source
+        .tick(1.second, 100.millis, ())
+        .map(_ => data())
+        .wireTap(payload => println(s"Payload created: $payload"))
+        .map { payload =>
+          MqttMessage("sensors/sensor01", ByteString(payload))
+        }
 
     // Connect to the existing sink
     val control = mqttSource.runWith(sink)
@@ -45,4 +57,5 @@ object Main {
     system.terminate()
     Await.result(system.whenTerminated, 5.seconds)
   }
+
 }
