@@ -5,3 +5,5 @@
 */project/.metals/
 */project/target/
 */project/project/
+mosquitto/data/
+prometheus/data/
