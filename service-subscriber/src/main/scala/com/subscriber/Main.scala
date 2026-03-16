@@ -12,13 +12,22 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
+import io.circe.parser._
 
 class TopicActor(topic: String) extends Actor {
+  var sum = 0
+  var lastTimestamp = ""
   override def receive: Receive = {
     case msg: MqttMessage =>
-      // process message per-topic (example: print)
-      val payload = msg.payload.utf8String
-      println(s"[$topic] payload=${payload}")
+      parse(msg.payload.utf8String) match {
+        case Right(json) =>
+          val cursor = json.hcursor
+          cursor.get[Int]("value").foreach(v => sum += v)
+          cursor.get[String]("timestamp").foreach(ts => lastTimestamp = ts)
+          println(s"Topic: $topic, Sum: $sum, Last Timestamp: $lastTimestamp")
+        case Left(err) =>
+        // handle parse error
+      }
     case other =>
     // ignore / handle other messages
   }

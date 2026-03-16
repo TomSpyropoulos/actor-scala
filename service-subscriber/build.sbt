@@ -6,3 +6,9 @@ libraryDependencies ++= Seq(
   "org.apache.pekko" %% "pekko-stream" % PekkoVersion,
   "org.eclipse.paho" % "org.eclipse.paho.client.mqttv3" % "1.2.5"
 )
+
+libraryDependencies ++= Seq(
+  "io.circe" %% "circe-core" % "0.14.6",
+  "io.circe" %% "circe-parser" % "0.14.6",
+  "io.circe" %% "circe-generic" % "0.14.6"
+)

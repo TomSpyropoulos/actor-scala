@@ -17,8 +17,7 @@ import scala.util.Random
 import java.time.Instant
 object Main {
 
-  def data(): String = {
-    val deviceName = "sensor01"
+  def data(deviceName: String): String = {
     val timestampz = Instant.now().toString
     val value = Random().nextInt(10) + 1
     s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": "$value"}"""
@@ -40,17 +39,19 @@ object Main {
       MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
 
     // Create a source of infinite messages
-    lazy val mqttSource =
+    lazy val mqttSources = (1 to 3).map { i =>
       Source
         .tick(1.second, 100.millis, ())
-        .map(_ => data())
+        .map(_ => data(s"sensor0$i"))
         .wireTap(payload => println(s"Payload created: $payload"))
         .map { payload =>
-          MqttMessage("sensors/sensor01", ByteString(payload))
+          MqttMessage(s"sensors/sensor0$i", ByteString(payload))
         }
+    }
 
     // Connect to the existing sink
-    val control = mqttSource.runWith(sink)
+    val merged = mqttSources.reduceLeft(_.merge(_))
+    val control = merged.runWith(sink)
 
     // Wait for the stream to finish, then terminate the ActorSystem
     Await.result(control, 5.seconds)
