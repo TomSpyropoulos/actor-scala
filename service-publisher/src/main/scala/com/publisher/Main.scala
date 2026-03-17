@@ -27,10 +27,13 @@ object Main {
     implicit val system: ActorSystem = ActorSystem("publisher")
     implicit val ec = system.dispatcher
 
+    // get os hostname
+    val hostname = java.net.InetAddress.getLocalHost.getHostName
+
     // Create connection settings
     val connectionSettings = MqttConnectionSettings(
       "tcp://mosquitto:1883",
-      "test-publisher",
+      s"test-publisher-$hostname",
       new MemoryPersistence
     )
 
@@ -39,19 +42,18 @@ object Main {
       MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
 
     // Create a source of infinite messages
-    lazy val mqttSources = (1 to 3).map { i =>
+    lazy val mqttSource =
       Source
         .tick(1.second, 100.millis, ())
-        .map(_ => data(s"sensor0$i"))
+        .map(_ => data(s"sensor$hostname"))
         .wireTap(payload => println(s"Payload created: $payload"))
         .map { payload =>
-          MqttMessage(s"sensors/sensor0$i", ByteString(payload))
+          MqttMessage(s"sensors/sensor$hostname", ByteString(payload))
+
         }
-    }
 
     // Connect to the existing sink
-    val merged = mqttSources.reduceLeft(_.merge(_))
-    val control = merged.runWith(sink)
+    val control = mqttSource.runWith(sink)
 
     // Wait for the stream to finish, then terminate the ActorSystem
     Await.result(control, 5.seconds)
