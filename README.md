@@ -5,7 +5,10 @@ It uses lazyly evaluated streams to produce sensor readings every 1/10th of a se
 The subscriber subscribes to the wildcard topic sensor, and for each different topic (sensor) in the wildcard, it produces a new actor that keeps the last state of the sensor that was written on the queue.
 
 ## Usage
-run '''docker compose up -d --build --scale publisher=3''' to run the service with 3 simulated sensors.
+run 
+```bash docker compose up -d --build --scale publisher=3
+```
+to run the service with 3 simulated sensors.
 
 Grafana is accessible at localhost:3000 and is preprovisioned with Prometheus as a data source and an example dashboard containing CPU and RAM usage of each container
 
