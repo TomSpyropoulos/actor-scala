@@ -6,7 +6,8 @@ The subscriber subscribes to the wildcard topic sensor, and for each different t
 
 ## Usage
 run 
-```bash docker compose up -d --build --scale publisher=3
+```bash 
+docker compose up -d --build --scale publisher=3
 ```
 to run the service with 3 simulated sensors.
 
