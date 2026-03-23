@@ -1,20 +1,23 @@
 # IoT Data Pipeline implemented in Scala, Pekko
-
 This project contains a containerized IoT data pipeline written in Scala using Pekko actors and streams.
 It uses lazyly evaluated streams to produce sensor readings every 1/10th of a second and send them to mqtt via a sink.
 The subscriber subscribes to the wildcard topic sensor, and for each different topic (sensor) in the wildcard, it produces a new actor that keeps the last state of the sensor that was written on the queue.
 
 ## Usage
-run 
+Run:
 ```bash 
 docker compose up -d --build --scale publisher=3
 ```
 to run the service with 3 simulated sensors.
 
-Grafana is accessible at localhost:3000 and is preprovisioned with Prometheus as a data source and an example dashboard containing CPU and RAM usage of each container
+Grafana is accessible at `localhost:3000` and is preprovisioned with Prometheus as a data source and an example dashboard containing CPU and RAM usage of each container
+
+To see the latest timestamp for each sensor and the total sum of the published messages run:
+```bash
+docker logs subscriber
+```
 
 ## Pekko executors: Fork-Join vs Virtual Threads
-
 In the default implemention of the actor dispatcher (scheduler) the actors are dispatched on an executor called fork-join-executor (which is similar to an event loop). Each actor represents a task object that is pushed unto a deque of tasks that is executed on a platform thread.
 This means that if the actor blocks waiting for example for IO, then the underlying platform thread is also blocked. An alternative executor more closely resembling Erlang's and Elixir's genserver can be implemented by using an executor based on virtual threads.
 
