@@ -15,8 +15,18 @@ import scala.concurrent.{Future, Await}
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
 import java.time.Instant
+
+/**
+ * Main entry point for the Publisher service.
+ * This service simulates an IoT sensor by generating periodic data and publishing it to MQTT.
+ */
 object Main {
 
+  /**
+   * Generates a JSON payload representing a sensor reading.
+   * @param deviceName Unique identifier for the simulated device.
+   * @return JSON string containing device name, timestamp, and a random value.
+   */
   def data(deviceName: String): String = {
     val timestampz = Instant.now().toString
     val value = Random().nextInt(10) + 1
@@ -24,24 +34,30 @@ object Main {
   }
 
   def main(args: Array[String]): Unit = {
+    // Initialize Pekko ActorSystem and ExecutionContext
     implicit val system: ActorSystem = ActorSystem("publisher")
     implicit val ec = system.dispatcher
 
-    // get os hostname
+    // Retrieve the container's hostname to create unique client IDs and topics
     val hostname = java.net.InetAddress.getLocalHost.getHostName
 
-    // Create connection settings
+    // Configure MQTT connection settings for the Mosquitto broker
     val connectionSettings = MqttConnectionSettings(
       "tcp://mosquitto:1883",
       s"test-publisher-$hostname",
       new MemoryPersistence
     )
 
-    // Create a stream processor
+    // Create an MQTT Sink to handle publishing messages
+    // MqttQoS.AtLeastOnce ensures that messages are delivered reliably
     val sink: Sink[MqttMessage, Future[Done]] =
       MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
 
-    // Create a source of infinite messages
+    // Define the Pekko Stream source:
+    // 1. Source.tick: Generates a signal every 100ms
+    // 2. map: Transforms the signal into a JSON data payload
+    // 3. wireTap: Side-effecting operation to log the payload to stdout
+    // 4. map: Wraps the payload into an MqttMessage with a unique topic per sensor
     lazy val mqttSource =
       Source
         .tick(1.second, 100.millis, ())
@@ -49,13 +65,13 @@ object Main {
         .wireTap(payload => println(s"Payload created: $payload"))
         .map { payload =>
           MqttMessage(s"sensors/sensor$hostname", ByteString(payload))
-
         }
 
-    // Connect to the existing sink
+    // Materialize and run the stream connecting the source to the MQTT sink
     val control = mqttSource.runWith(sink)
 
-    // Wait for the stream to finish, then terminate the ActorSystem
+    // Graceful shutdown logic: Wait for the stream (which is infinite in this case) 
+    // or wait for termination signals.
     Await.result(control, 5.seconds)
     system.terminate()
     Await.result(system.whenTerminated, 5.seconds)

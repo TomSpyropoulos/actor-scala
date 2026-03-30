@@ -1,27 +1,65 @@
-# IoT Data Pipeline implemented in Scala, Pekko
-This project contains a containerized IoT data pipeline written in Scala using Pekko actors and streams.
-It uses lazyly evaluated streams to produce sensor readings every 1/10th of a second and send them to mqtt via a sink.
-The subscriber subscribes to the wildcard topic sensor, and for each different topic (sensor) in the wildcard, it produces a new actor that keeps the last state of the sensor that was written on the queue.
+# IoT Data Pipeline (Scala & Pekko)
 
-## Usage
-Run:
+A high-performance, containerized IoT data pipeline implemented using **Scala**, **Pekko Actors**, and **Pekko Streams**. This project demonstrates how to build a scalable messaging system that handles real-time sensor data with backpressure and efficient resource management.
+
+## 🏗️ System Architecture
+
+The system consists of the following components:
+
+1.  **Service Publisher**: A Scala application that simulates IoT sensors. Each instance generates sensor readings (JSON) every 100ms and publishes them to an MQTT broker.
+2.  **Mosquitto MQTT Broker**: Acts as the central messaging hub, facilitating communication between publishers and subscribers.
+3.  **Service Subscriber**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp).
+4.  **Prometheus**: Scrapes metrics from the containers and the host system.
+5.  **Grafana**: Provides a visual dashboard for monitoring container resource usage (CPU/RAM).
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+
+### Running the Pipeline
+
+To start the entire stack with 3 simulated sensors (publisher instances):
+
 ```bash 
 docker compose up -d --build --scale publisher=3
 ```
-to run the service with 3 simulated sensors.
 
-Grafana is accessible at `localhost:3000` and is preprovisioned with Prometheus as a data source and an example dashboard containing CPU and RAM usage of each container
+### Monitoring & Logs
 
-To see the latest timestamp for each sensor and the total sum of the published messages run:
-```bash
-docker logs subscriber
-```
+- **Grafana**: Accessible at [http://localhost:3000](http://localhost:3000). 
+    - *Credentials*: `admin` / `admin` (default).
+    - Pre-provisioned with Prometheus and a "Container Monitoring" dashboard.
+- **Subscriber Logs**: View the aggregated state for each sensor:
+    ```bash
+    docker logs -f subscriber
+    ```
 
-## Pekko executors: Fork-Join vs Virtual Threads
-In the default implemention of the actor dispatcher (scheduler) the actors are dispatched on an executor called fork-join-executor (which is similar to an event loop). Each actor represents a task object that is pushed unto a deque of tasks that is executed on a platform thread.
-This means that if the actor blocks waiting for example for IO, then the underlying platform thread is also blocked. An alternative executor more closely resembling Erlang's and Elixir's genserver can be implemented by using an executor based on virtual threads.
+## 🧠 Deep Dive: Pekko Executors
 
-In Java 21, virtual threads where introduced. It is a lightweight thread that is managed by the runtime (similar to goroutines in golang), that can block and because it is managed by the runtime, it can be unpinned from the platform thread.
-Pekko 1.2.0 (2025) with Java 24 now fully supports virtual-thread-executor. Actors can be deployed with simple blocking logic and the runtime will schedule them.
+### Fork-Join vs. Virtual Threads
 
-The current implementation of this project uses fork-join-executor (the default). Pekko also provides a thread-pool-executor that pushes each actor on it's own platform thread but this will be too expensive for using a thread for each sensor.
+The project explores different execution models for Pekko Actors:
+
+#### Fork-Join Executor (Default)
+In the default implementation, actors are dispatched on a `fork-join-executor`. Actors are treated as tasks pushed onto a deque and executed on a fixed pool of platform threads. 
+- **Pros**: Highly efficient for non-blocking workloads.
+- **Cons**: If an actor performs a blocking I/O operation, it stalls the underlying platform thread, potentially leading to thread starvation.
+
+#### Virtual Threads (Project Loom)
+Pekko 1.2.0+ and Java 21/24 introduce support for `virtual-thread-executor`. Virtual threads are lightweight, runtime-managed threads (similar to Goroutines in Go).
+- **Behavior**: When a virtual thread blocks, it is unpinned from its carrier platform thread, allowing other virtual threads to continue execution.
+- **Advantage**: Allows writing simple, blocking code while maintaining the scalability of asynchronous systems.
+
+The current implementation uses the **Fork-Join Executor**. To experiment with Virtual Threads, the `application.conf` (or actor system configuration) can be adjusted to use the `pekko.dispatch.VirtualThreadExecutorConfigurator`.
+
+## 🛠️ Tech Stack
+
+- **Language**: Scala 3
+- **Concurrency**: Pekko (Actors & Streams)
+- **Messaging**: MQTT (via Alpakka/Pekko Connectors)
+- **JSON**: Circe
+- **Observability**: Prometheus & Grafana
+- **Deployment**: Docker & Docker Compose
