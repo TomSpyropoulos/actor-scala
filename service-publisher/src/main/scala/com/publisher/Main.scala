@@ -30,7 +30,7 @@ object Main {
   def data(deviceName: String): String = {
     val timestampz = Instant.now().toString
     val value = Random().nextInt(10) + 1
-    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": "$value"}"""
+    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": $value}"""
   }
 
   def main(args: Array[String]): Unit = {

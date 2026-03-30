@@ -10,5 +10,7 @@ libraryDependencies ++= Seq(
 libraryDependencies ++= Seq(
   "io.circe" %% "circe-core" % "0.14.6",
   "io.circe" %% "circe-parser" % "0.14.6",
-  "io.circe" %% "circe-generic" % "0.14.6"
+  "io.circe" %% "circe-generic" % "0.14.6",
+  "org.postgresql" % "postgresql" % "42.7.2",
+  "com.zaxxer" % "HikariCP" % "5.1.0"
 )
