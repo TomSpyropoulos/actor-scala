@@ -9,8 +9,10 @@ The system consists of the following components:
 1.  **Service Publisher**: A Scala application that simulates IoT sensors. Each instance generates sensor readings (JSON) every 100ms and publishes them to an MQTT broker.
 2.  **Mosquitto MQTT Broker**: Acts as the central messaging hub, facilitating communication between publishers and subscribers.
 3.  **Service Subscriber**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp).
-4.  **Prometheus**: Scrapes metrics from the containers and the host system.
-5.  **Grafana**: Provides a visual dashboard for monitoring container resource usage (CPU/RAM).
+5.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
+6.  **Grafana**: Provides a visual dashboard for monitoring container resource usage and application-specific metrics.
+7.  **TimescaleDB**: A PostgreSQL extension for high-performance time-series data storage.
+
 
 ## 🚀 Getting Started
 
@@ -32,7 +34,10 @@ docker compose up -d --build --scale publisher=3
 - **Grafana**: Accessible at [http://localhost:3000](http://localhost:3000). 
     - *Credentials*: `admin` / `admin` (default).
     - Pre-provisioned with Prometheus and a "Container Monitoring" dashboard.
-- **Subscriber Logs**: View the aggregated state for each sensor:
+- **Prometheus UI**: Accessible at [http://localhost:9090](http://localhost:9090).
+    - Query `subscriber_requests_total` for throughput (req/sec).
+    - Query `subscriber_request_latency_milliseconds` for p50, p95, p99, and p999 latencies.
+- **Subscriber Metrics**: Raw endpoint available at [http://localhost:8081/metrics](http://localhost:8081/metrics).- **Subscriber Logs**: View the aggregated state for each sensor:
     ```bash
     docker logs -f subscriber
     ```

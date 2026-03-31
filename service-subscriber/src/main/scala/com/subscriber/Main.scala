@@ -80,12 +80,24 @@ class TopicActor(topic: String) extends Actor {
 
           (deviceNameOpt, valueOpt, tsOpt) match {
             case (Some(name), Some(v), Some(ts)) =>
+              // --- Prometheus Metrics Recording ---
+              // Calculate end-to-end latency: Payload creation vs Processing time
+              val startTime = OffsetDateTime.parse(ts)
+              val now = OffsetDateTime.now()
+              val latency = java.time.Duration.between(startTime, now).toMillis.toDouble
+              
+              // Increment the total processed messages counter for this topic
+              Metrics.requestCount.labels(topic).inc()
+              // Observe the latency in the summary metric
+              Metrics.requestLatency.labels(topic).observe(latency)
+              // -------------------------------------
+
               sum += v
               lastTimestamp = ts
               // Insert into TimescaleDB
               Database.insertData(name, v, ts)
               // Log current status for observability
-              println(s"Topic: $topic, Sum: $sum, Last Timestamp: $lastTimestamp")
+              println(s"Topic: $topic, Sum: $sum, Last Timestamp: $lastTimestamp, Latency: ${latency}ms")
             case _ =>
               println(s"Missing fields in message for topic $topic")
           }
@@ -106,6 +118,9 @@ class TopicActor(topic: String) extends Actor {
   */
 object Main {
   def main(args: Array[String]): Unit = {
+    // Initialize Prometheus metrics server
+    Metrics.init(8081)
+
     // Initialize Pekko system and context
     implicit val system: ActorSystem = ActorSystem("subscriber")
     implicit val ec = system.dispatcher
@@ -153,6 +168,7 @@ object Main {
     // Register a shutdown hook to ensure graceful termination of the ActorSystem
     sys.addShutdownHook {
       println("Shutting down subscriber...")
+      Metrics.stop()
       system.terminate()
       Await.result(system.whenTerminated, 5.seconds)
     }

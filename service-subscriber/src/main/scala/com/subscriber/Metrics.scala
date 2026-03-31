@@ -1,0 +1,62 @@
+package com.subscriber
+
+import io.prometheus.client.Counter
+import io.prometheus.client.Summary
+import io.prometheus.client.exporter.HTTPServer
+import io.prometheus.client.hotspot.DefaultExports
+
+/**
+ * Manages Prometheus metrics and the HTTP server for scraping.
+ * This object centralizes all monitoring logic for the Service Subscriber.
+ */
+object Metrics {
+  /**
+   * Request count metric: A counter that increments for each processed MQTT message.
+   * Labeled by 'topic' to track requests per sensor.
+   */
+  val requestCount: Counter = Counter.build()
+    .name("subscriber_requests_total")
+    .help("Total requests processed by the subscriber.")
+    .labelNames("topic")
+    .register()
+
+  /**
+   * Latency metric: A summary that records the time difference between the 
+   * payload's timestamp (source) and the current time (processing).
+   * Labeled by 'topic' and provides quantiles (p50, p95, p99, p999).
+   */
+  val requestLatency: Summary = Summary.build()
+    .name("subscriber_request_latency_milliseconds")
+    .help("Latency of requests in milliseconds (Now - Payload Timestamp).")
+    .labelNames("topic")
+    .quantile(0.5, 0.05)    // Median latency
+    .quantile(0.95, 0.01)   // 95th percentile
+    .quantile(0.99, 0.001)  // 99th percentile
+    .quantile(0.999, 0.0001)// 99.9th percentile
+    .register()
+
+  private var server: Option[HTTPServer] = None
+
+  /**
+   * Initializes metrics and starts the HTTP server.
+   * Also initializes standard Hotspot JVM metrics (GC, memory, threads).
+   * @param port The port to listen on for scraping (default: 8081).
+   */
+  def init(port: Int = 8081): Unit = {
+    if (server.isEmpty) {
+      // Initialize JVM-wide metrics for visibility into the runtime
+      DefaultExports.initialize()
+      // Start the Prometheus scraper endpoint
+      server = Some(new HTTPServer(port))
+      println(s"Prometheus metrics server started on port $port")
+    }
+  }
+
+  /**
+   * Stops the HTTP server gracefully during application shutdown.
+   */
+  def stop(): Unit = {
+    server.foreach(_.stop())
+    server = None
+  }
+}
