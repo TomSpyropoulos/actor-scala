@@ -6,7 +6,7 @@ A high-performance, containerized IoT data pipeline implemented using **Scala**,
 
 The system consists of the following components:
 
-1.  **Service Publisher**: A Scala application that simulates IoT sensors. Each instance generates sensor readings (JSON) every 100ms and publishes them to an MQTT broker.
+1.  **Service Publisher**: A Scala application that simulates IoT sensors. Each instance generates 1000 sensor readings (JSON) per second and publishes them to an MQTT broker.
 2.  **Mosquitto MQTT Broker**: Acts as the central messaging hub, facilitating communication between publishers and subscribers.
 3.  **Service Subscriber**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp).
 5.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
