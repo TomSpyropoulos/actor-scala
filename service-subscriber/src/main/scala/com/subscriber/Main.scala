@@ -1,6 +1,6 @@
 package com.subscriber
 
-import org.apache.pekko.actor.{Actor, ActorRef, ActorSystem, Props}
+import org.apache.pekko.actor.{Actor, ActorLogging, ActorRef, ActorSystem, Props}
 import org.apache.pekko.stream.connectors.mqtt.MqttConnectionSettings
 import org.apache.pekko.stream.connectors.mqtt.MqttMessage
 import org.apache.pekko.stream.connectors.mqtt.MqttQoS
@@ -10,12 +10,13 @@ import org.apache.pekko.stream.scaladsl.Sink
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.Await
+import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.concurrent.duration.DurationInt
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import java.time.OffsetDateTime
 import io.circe.parser._
+import org.apache.pekko.pattern.pipe
 
 /** Database handler for TimescaleDB using HikariCP for connection pooling. */
 object Database {
@@ -28,18 +29,22 @@ object Database {
   config.addDataSourceProperty("cachePrepStmts", "true")
   config.addDataSourceProperty("prepStmtCacheSize", "250")
   config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048")
+  // Optimize connection pool size for blocking I/O dispatcher
+  config.setMaximumPoolSize(20)
 
   val dataSource = new HikariDataSource(config)
 
-  /** Inserts a sensor reading into the Data table.
+  /** Inserts a sensor reading into the Data table asynchronously.
     * @param deviceName
     *   The name of the device sending the data.
     * @param value
     *   The sensor reading value.
     * @param timestamp
     *   The ISO-8601 timestamp of the reading.
+    * @param ec
+    *   Execution context (should be a dedicated dispatcher for blocking I/O).
     */
-  def insertData(deviceName: String, value: Int, timestamp: String): Unit = {
+  def insertData(deviceName: String, value: Int, timestamp: String)(implicit ec: ExecutionContext): Future[Unit] = Future {
     val conn = dataSource.getConnection
     try {
       val stmt = conn.prepareStatement(
@@ -51,6 +56,7 @@ object Database {
       val ts = OffsetDateTime.parse(timestamp)
       stmt.setObject(3, ts)
       stmt.executeUpdate()
+      ()
     } finally {
       conn.close()
     }
@@ -62,7 +68,10 @@ object Database {
   * @param topic
   *   The specific MQTT topic this actor is handling.
   */
-class TopicActor(topic: String) extends Actor {
+class TopicActor(topic: String) extends Actor with ActorLogging {
+  // Use a dedicated dispatcher for blocking DB operations to avoid starvation
+  implicit val blockingDispatcher: ExecutionContext = context.system.dispatchers.lookup("pekko.actor.blocking-io-dispatcher")
+
   // Local state to keep track of cumulative sum and latest data point
   var sum = 0
   var lastTimestamp = ""
@@ -81,35 +90,35 @@ class TopicActor(topic: String) extends Actor {
           (deviceNameOpt, valueOpt, tsOpt) match {
             case (Some(name), Some(v), Some(ts)) =>
               // --- Prometheus Metrics Recording ---
-              // Calculate end-to-end latency: Payload creation vs Processing time
               val startTime = OffsetDateTime.parse(ts)
               val now = OffsetDateTime.now()
-              val latency = java.time.Duration.between(startTime, now).toMillis.toDouble
-              
-              // Increment the total processed messages counter for this topic
-              Metrics.requestCount.labels(topic).inc()
-              // Observe the latency in the summary metric
-              Metrics.requestLatency.labels(topic).observe(latency)
+              val latency =
+                java.time.Duration.between(startTime, now).toMillis.toDouble
+
+              Metrics.requestCount.inc()
+              Metrics.requestLatency.observe(latency)
               // -------------------------------------
 
               sum += v
               lastTimestamp = ts
-              // Insert into TimescaleDB
-              Database.insertData(name, v, ts)
-              // Log current status for observability
-              println(s"Topic: $topic, Sum: $sum, Last Timestamp: $lastTimestamp, Latency: ${latency}ms")
+              
+              // Asynchronous insert using dedicated dispatcher
+              Database.insertData(name, v, ts).failed.foreach { err =>
+                log.error(s"Failed to insert data for topic $topic: ${err.getMessage}")
+              }
+              
+              // Log using ActorLogging (asynchronous)
+              if (log.isDebugEnabled) {
+                log.debug("Topic: {}, Sum: {}, Last Timestamp: {}, Latency: {}ms", topic, sum, lastTimestamp, latency)
+              }
             case _ =>
-              println(s"Missing fields in message for topic $topic")
+              log.warning("Missing fields in message for topic {}", topic)
           }
         case Left(err) =>
-          // Log parsing errors
-          System.err.println(
-            s"Failed to parse JSON for topic $topic: ${err.getMessage}"
-          )
+          log.error("Failed to parse JSON for topic {}: {}", topic, err.getMessage)
       }
     case other =>
-      // Gracefully ignore unrecognized messages
-      println(s"Unknown message received by TopicActor: $other")
+      log.warning("Unknown message received by TopicActor: {}", other)
   }
 }
 
@@ -139,35 +148,29 @@ object Main {
     )
 
     // Create an MQTT source that emits messages arriving on the subscribed topics
+    // Increased bufferSize to 1024 to handle higher throughput
     val mqttSource =
       MqttSource.atMostOnce(
         mqttConnectionSettings.withClientId("test-subscriber"),
         subscriptions,
-        bufferSize = 8
+        bufferSize = 1024
       )
 
     // Thread-safe map to store and look up actors based on the MQTT topic name.
-    // This ensures we have exactly one actor per sensor.
     val actors = TrieMap.empty[String, ActorRef]
 
-    // Execute the stream processing pipeline:
-    // 1. Source: Receives messages from Mosquitto
-    // 2. Sink: Dispatches each message to the appropriate TopicActor
+    // Execute the stream processing pipeline
     mqttSource.runWith(Sink.foreach { msg =>
       val topic = msg.topic
-      // Atomically get the existing actor or create a new one for this topic
       val actorRef = actors.getOrElseUpdate(
         topic,
-        // Let Pekko manage the underlying actor creation and lifecycle
         system.actorOf(Props(new TopicActor(topic)))
       )
-      // Send the message asynchronously to the actor
       actorRef ! msg
     })
 
-    // Register a shutdown hook to ensure graceful termination of the ActorSystem
+    // Register a shutdown hook
     sys.addShutdownHook {
-      println("Shutting down subscriber...")
       Metrics.stop()
       system.terminate()
       Await.result(system.whenTerminated, 5.seconds)

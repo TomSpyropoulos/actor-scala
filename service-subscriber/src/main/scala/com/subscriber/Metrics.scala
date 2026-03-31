@@ -17,7 +17,6 @@ object Metrics {
   val requestCount: Counter = Counter.build()
     .name("subscriber_requests_total")
     .help("Total requests processed by the subscriber.")
-    .labelNames("topic")
     .register()
 
   /**
@@ -28,7 +27,6 @@ object Metrics {
   val requestLatency: Summary = Summary.build()
     .name("subscriber_request_latency_milliseconds")
     .help("Latency of requests in milliseconds (Now - Payload Timestamp).")
-    .labelNames("topic")
     .quantile(0.5, 0.05)    // Median latency
     .quantile(0.95, 0.01)   // 95th percentile
     .quantile(0.99, 0.001)  // 99th percentile
