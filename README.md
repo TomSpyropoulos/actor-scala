@@ -64,7 +64,8 @@ The current implementation uses the **Fork-Join Executor**. To experiment with V
 
 - **Language**: Scala 3
 - **Concurrency**: Pekko (Actors & Streams)
-- **Messaging**: MQTT (via Alpakka/Pekko Connectors)
+- **Messaging**: MQTT (Mosquitto / via Alpakka,Pekko Connectors)
 - **JSON**: Circe
 - **Observability**: Prometheus & Grafana
+- **Database**: TimescaleDB
 - **Deployment**: Docker & Docker Compose
