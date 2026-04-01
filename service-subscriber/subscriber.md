@@ -1,34 +1,41 @@
 # Service Subscriber
 
-The **Service Subscriber** is a Scala application built with [Pekko Streams](https://pekko.apache.org/docs/pekko/current/stream/index.html) and [Pekko Actors](https://pekko.apache.org/docs/pekko/current/actor/index.html). It consumes messages from an MQTT broker, records metrics, and stores the data in [TimescaleDB](https://www.timescale.com/).
+The **Service Subscriber** is a Scala-based application responsible for ingesting, processing, and storing the real-time stream of telemetry data produced by the publishers. It is built using [Pekko Streams](https://pekko.apache.org/docs/pekko/current/stream/index.html) and [Pekko Actors](https://pekko.apache.org/docs/pekko/current/actor/index.html).
 
-## Functionality
+## ⚙️ Core Functionality
 
-- **MQTT Subscription**: Subscribes to the wildcard topic `sensors/#` to receive data from all sensors.
-- **Actor per Topic**: Dynamically creates a `TopicActor` for each unique MQTT topic it discovers. This actor manages the state (cumulative sum) and processing for that specific sensor.
-- **Data Persistence**: Parses JSON payloads and inserts them into TimescaleDB using [HikariCP](https://github.com/brettwooldridge/HikariCP) for efficient connection pooling.
-- **Prometheus Monitoring**: Exposes a metrics endpoint for [Prometheus](https://prometheus.io/) to scrape.
+1. **Wildcard Ingestion:**
+   The Subscriber connects to the Mosquitto MQTT Broker and subscribes to the wildcard topic `sensors/#`. This allows a single subscriber instance to receive telemetry data from every publisher on the network.
 
-## Technical Stack
+2. **Dynamic Actor Creation:**
+   Instead of processing all messages in a single bottleneck process, the Subscriber utilizes the Actor Model. For every unique sensor topic it discovers, it spawns a dedicated **TopicActor**. This actor manages the state (cumulative sum) and processing for that specific sensor.
 
-- **Language**: Scala
-- **Runtime**: Pekko Actor System & Pekko Streams
-- **JSON Parsing**: [Circe](https://circe.github.io/circe/)
-- **Database**: TimescaleDB (PostgreSQL)
-- **Monitoring**: Prometheus Java Client
-- **Logging**: Pekko Logging with Logback
+3. **Data Transformation & Storage:**
+   The Subscriber parses incoming JSON payloads using [Circe](https://circe.github.io/circe/) and extracts the relevant information. It then persists this data into **TimescaleDB** using [HikariCP](https://github.com/brettwooldridge/HikariCP) for efficient connection pooling.
 
-## Metrics
+4. **Metrics and Observability:**
+   The service exposes a metrics endpoint for [Prometheus](https://prometheus.io/) to scrape, providing visibility into the pipeline's performance.
+
+## 🏗️ Architecture
+
+The application is built around the **Pekko** ecosystem:
+
+- **Pekko Actor System**: The root for managing all concurrent processes and actors.
+- **MQTT Connector**: Utilizes Alpakka MQTT for robust connectivity to the Mosquitto broker.
+- **Topic Actors**: Dynamically spawned actors that handle state management and processing per sensor topic.
+- **Connection Pooling**: Uses HikariCP to manage connections to TimescaleDB, ensuring optimal throughput.
+
+## 📊 Metrics Tracking
 
 The service exposes the following Prometheus metrics on port `8081`:
 
 - `subscriber_requests_total`: Total count of MQTT messages processed.
 - `subscriber_request_latency_milliseconds`: Latency (processing time - sensor timestamp) with quantiles (p50, p95, p99).
-- Standard JVM metrics (GC, memory, threads).
+- **JVM Metrics**: Standard metrics for garbage collection, memory usage, and thread counts.
 
-## Configuration
+## ⚙️ Configuration
 
-Environment variables used for database connection:
+The service uses the following environment variables for database connectivity:
 - `DB_URL`: JDBC URL (default: `jdbc:postgresql://localhost:5432/epu`)
 - `DB_USER`: Database user (default: `postgres`)
 - `DB_PASSWORD`: Database password (default: `postgres`)
