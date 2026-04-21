@@ -1,5 +1,8 @@
-  .bsp/
-  .metals/
-  project/metals.sbt
-  target
-  project/target
+.bsp/
+.metals/
+project/metals.sbt
+target
+project/target
+Dockerfile
+.dockerignore
+*.md
