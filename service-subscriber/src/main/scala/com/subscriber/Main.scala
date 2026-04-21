@@ -34,7 +34,7 @@ object Main {
     // Define wildcard subscription: "sensors/#" matches all sub-topics under sensors
     val wildcardTopic = "sensors/#"
     val subscriptions = MqttSubscriptions(
-      Map(wildcardTopic -> MqttQoS.AtLeastOnce)
+      Map(wildcardTopic -> MqttQoS.AtMostOnce)
     )
 
     // Create an MQTT source that emits messages arriving on the subscribed topics
@@ -67,3 +67,4 @@ object Main {
     }
   }
 }
+
