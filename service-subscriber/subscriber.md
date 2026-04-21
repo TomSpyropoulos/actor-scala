@@ -39,3 +39,16 @@ The service uses the following environment variables for database connectivity:
 - `DB_URL`: JDBC URL (default: `jdbc:postgresql://localhost:5432/epu`)
 - `DB_USER`: Database user (default: `postgres`)
 - `DB_PASSWORD`: Database password (default: `postgres`)
+
+## 🔍 Missing Sensor Detection
+
+The Subscriber implements a heartbeat-based missing sensor detection system:
+
+- Every **5 seconds**, the main stream scheduler sends a `"heartbeat"` message to all active `TopicActor` instances.
+- Each actor compares its `lastSeen` timestamp (captured using the subscriber's local epoch seconds) against the current time.
+- If a sensor has not sent data within the last second, its status transitions to `MISSING`; otherwise it is `ALIVE`.
+- State changes are logged via the actor logger (`log.warning`) and persisted asynchronously to the `sensor_status` table in TimescaleDB, but only when the status actually changes to avoid unnecessary writes.
+
+## 📡 MQTT Quality of Service
+
+The subscriber connects with **QoS 0 (At Most Once)** via `MqttQoS.AtMostOnce`. This provides fire-and-forget delivery with no acknowledgment overhead, prioritizing throughput and low latency over guaranteed delivery.
