@@ -16,9 +16,10 @@ class TopicActor(topic: String) extends Actor with ActorLogging {
   // Use a dedicated dispatcher for blocking DB operations to avoid starvation
   implicit val blockingDispatcher: ExecutionContext = context.system.dispatchers.lookup("pekko.actor.blocking-io-dispatcher")
 
-  // Local state to keep track of cumulative sum and latest data point
+  // Local state to keep track of cumulative sum and last seen timestamp (epoch seconds)
   var sum = 0
-  var lastTimestamp = ""
+  var lastSeen: Long = 0L
+  var lastStatus: Option[String] = None
 
   override def receive: Receive = {
     case msg: MqttMessage =>
@@ -44,22 +45,36 @@ class TopicActor(topic: String) extends Actor with ActorLogging {
               // -------------------------------------
 
               sum += v
-              lastTimestamp = ts
+              lastSeen = java.time.Instant.now().getEpochSecond
 
               // Asynchronous insert using dedicated dispatcher
               Database.insertData(name, v, ts).failed.foreach { err =>
                 log.error(s"Failed to insert data for topic $topic: ${err.getMessage}")
-              }
-
-              // Log using ActorLogging (asynchronous)
-              if (log.isDebugEnabled) {
-                log.debug("Topic: {}, Sum: {}, Last Timestamp: {}, Latency: {}ms", topic, sum, lastTimestamp, latency)
               }
             case _ =>
               log.warning("Missing fields in message for topic {}", topic)
           }
         case Left(err) =>
           log.error("Failed to parse JSON for topic {}: {}", topic, err.getMessage)
+      }
+    case "heartbeat" =>
+      val now = java.time.Instant.now().getEpochSecond
+
+      val (newStatus, shouldInsert) = if (lastSeen == 0L) {
+        ("MISSING", lastStatus != Some("MISSING"))
+      } else {
+        val diff = now - lastSeen
+        val status = if (diff > 1) "MISSING" else "ALIVE"
+        (status, lastStatus != Some(status))
+      }
+
+      if (shouldInsert) {
+        log.warning("Sensor {} is now {}", topic, newStatus)
+        val deviceName = topic.stripPrefix("sensors/")
+        Database.insertStatus(deviceName, newStatus).failed.foreach { err =>
+          log.error(s"Failed to insert status for $topic: ${err.getMessage}")
+        }
+        lastStatus = Some(newStatus)
       }
     case other =>
       log.warning("Unknown message received by TopicActor: {}", other)

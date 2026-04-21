@@ -52,7 +52,7 @@ object Main {
 
     // Create an MQTT Sink to handle publishing messages
     val sink: Sink[MqttMessage, Future[Done]] =
-      MqttSink(connectionSettings, MqttQoS.AtLeastOnce)
+      MqttSink(connectionSettings, MqttQoS.AtMostOnce)
 
     // Define the Pekko Stream source:
     // 1. Source.tick: Generates a signal every 1ms

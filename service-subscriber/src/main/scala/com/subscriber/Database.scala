@@ -49,4 +49,19 @@ object Database {
       conn.close()
     }
   }
+
+  def insertStatus(deviceName: String, status: String)(implicit ec: ExecutionContext): Future[Unit] = Future {
+    val conn = dataSource.getConnection
+    try {
+      val stmt = conn.prepareStatement(
+        "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)"
+      )
+      stmt.setString(1, deviceName)
+      stmt.setString(2, status)
+      stmt.executeUpdate()
+      ()
+    } finally {
+      conn.close()
+    }
+  }
 }

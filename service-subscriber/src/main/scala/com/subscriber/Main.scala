@@ -59,6 +59,11 @@ object Main {
       actorRef ! msg
     })
 
+    // Heartbeat every 5 seconds to check for missing sensors
+    system.scheduler.scheduleWithFixedDelay(5.seconds, 5.seconds) { () =>
+      actors.values.foreach(_ ! "heartbeat")
+    }
+
     // Register a shutdown hook
     sys.addShutdownHook {
       Metrics.stop()
