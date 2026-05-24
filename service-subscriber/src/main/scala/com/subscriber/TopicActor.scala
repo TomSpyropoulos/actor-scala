@@ -47,8 +47,12 @@ class TopicActor(topic: String) extends Actor with ActorLogging {
               sum += v
               lastSeen = java.time.Instant.now().getEpochSecond
 
+              val publisherEpochMs = startTime.toInstant.toEpochMilli
+
               // Asynchronous insert using dedicated dispatcher
-              Database.insertData(name, v, ts).failed.foreach { err =>
+              Database.insertData(name, v, ts).andThen { case _ =>
+                Metrics.e2eLatency.observe(math.max(0, System.currentTimeMillis() - publisherEpochMs))
+              }.failed.foreach { err =>
                 log.error(s"Failed to insert data for topic $topic: ${err.getMessage}")
               }
             case _ =>

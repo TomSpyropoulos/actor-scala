@@ -33,6 +33,15 @@ object Metrics {
     .quantile(0.999, 0.0001)// 99.9th percentile
     .register()
 
+  val e2eLatency: Summary = Summary.build()
+    .name("subscriber_e2e_latency_milliseconds")
+    .help("End-to-end latency in milliseconds (DB ack - Payload Timestamp).")
+    .quantile(0.5, 0.05)
+    .quantile(0.95, 0.01)
+    .quantile(0.99, 0.001)
+    .quantile(0.999, 0.0001)
+    .register()
+
   private var server: Option[HTTPServer] = None
 
   /**
