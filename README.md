@@ -34,9 +34,13 @@ docker compose up -d --build --scale publisher=3
 - **Grafana**: Accessible at [http://localhost:3000](http://localhost:3000) without authentication.
     - Pre-provisioned with Prometheus and a "Container Monitoring" dashboard.
 - **Prometheus UI**: Accessible at [http://localhost:9090](http://localhost:9090).
-    - Query `subscriber_requests_total` for throughput (req/sec).
-    - Query `subscriber_request_latency_milliseconds` for p50, p95, p99, and p999 latencies.
-- **Subscriber Metrics**: Raw endpoint available at [http://localhost:8081/metrics](http://localhost:8081/metrics).- **Subscriber Logs**: View the aggregated state for each sensor:
+- **Subscriber Metrics**: Raw endpoint available at [http://localhost:8081/metrics](http://localhost:8081/metrics).
+    - `subscriber_requests_total` — throughput counter.
+    - `subscriber_request_latency_milliseconds` — publisher→subscriber latency (p50/p95/p99/p999).
+    - `subscriber_e2e_latency_milliseconds` — publisher→DB latency (p50/p95/p99/p999).
+    - `subscriber_db_write_latency_milliseconds` — subscriber→DB write latency (p50/p95/p99/p999).
+    - `subscriber_sensor_up{device="<name>"}` — per-sensor liveness gauge (1 = ALIVE, 0 = MISSING).
+- **Subscriber Logs**: View the aggregated state for each sensor:
     ```bash
     docker logs -f subscriber
     ```
