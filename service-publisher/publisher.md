@@ -8,7 +8,7 @@ The **Service Publisher** is a Scala-based application designed to simulate the 
    Built using [Pekko Streams](https://pekko.apache.org/docs/pekko/current/stream/index.html), it simulates real-world hardware sensors by generating unique identifiers based on the container's hostname.
 
 2. **Data Generation:**
-   The service produces a JSON payload every second. The payload is constructed with the following structure:
+   The service produces **1000 JSON payloads per second** (throttled at 1000/sec via Pekko Streams backpressure). Each payload contains: The payload is constructed with the following structure:
    ```json
    {
      "device_name": "sensor<hostname>",

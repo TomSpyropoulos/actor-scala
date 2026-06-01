@@ -55,7 +55,7 @@ object Main {
       MqttSink(connectionSettings, MqttQoS.AtMostOnce)
 
     // Define the Pekko Stream source:
-    // 1. Source.tick: Generates a signal every 1ms
+    // 1. Source.repeat + throttle(1000, 1.second): generates 1000 signals per second
     // 2. map: Transforms the signal into a JSON data payload
     // 3. wireTap: Asynchronously log the payload (only if debug is enabled to save perf)
     // 4. map: Wraps the payload into an MqttMessage

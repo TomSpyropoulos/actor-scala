@@ -13,7 +13,6 @@ import io.prometheus.client.hotspot.DefaultExports
 object Metrics {
   /**
    * Request count metric: A counter that increments for each processed MQTT message.
-   * Labeled by 'topic' to track requests per sensor.
    */
   val requestCount: Counter = Counter.build()
     .name("subscriber_requests_total")
@@ -21,9 +20,9 @@ object Metrics {
     .register()
 
   /**
-   * Latency metric: A summary that records the time difference between the 
+   * Latency metric: A summary that records the time difference between the
    * payload's timestamp (source) and the current time (processing).
-   * Labeled by 'topic' and provides quantiles (p50, p95, p99, p999).
+   * Provides quantiles (p50, p95, p99, p999).
    */
   val requestLatency: Summary = Summary.build()
     .name("subscriber_request_latency_milliseconds")

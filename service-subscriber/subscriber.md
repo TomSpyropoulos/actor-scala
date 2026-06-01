@@ -27,10 +27,12 @@ The application is built around the **Pekko** ecosystem:
 
 ## 📊 Metrics Tracking
 
-The service exposes the following Prometheus metrics on port `8081`:
+The service exposes the following Prometheus metrics on port `8081` (raw endpoint: `http://localhost:8081/metrics`):
 
 - `subscriber_requests_total`: Total count of MQTT messages processed.
-- `subscriber_request_latency_milliseconds`: Latency (processing time - sensor timestamp) with quantiles (p50, p95, p99).
+- `subscriber_request_latency_milliseconds`: Latency (processing time − sensor timestamp) with quantiles (p50, p95, p99, p999).
+- `subscriber_e2e_latency_milliseconds`: End-to-end latency (DB ack − sensor timestamp) with quantiles (p50, p95, p99, p999).
+- `subscriber_sensor_up{device="<name>"}`: Per-sensor liveness gauge — `1` = ALIVE, `0` = MISSING. Updated every heartbeat.
 - **JVM Metrics**: Standard metrics for garbage collection, memory usage, and thread counts.
 
 ## ⚙️ Configuration
