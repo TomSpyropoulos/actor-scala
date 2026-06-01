@@ -42,6 +42,15 @@ object Metrics {
     .quantile(0.999, 0.0001)
     .register()
 
+  val dbWriteLatency: Summary = Summary.build()
+    .name("subscriber_db_write_latency_milliseconds")
+    .help("Latency from subscriber receive to DB write ack, in milliseconds.")
+    .quantile(0.5, 0.05)
+    .quantile(0.95, 0.01)
+    .quantile(0.99, 0.001)
+    .quantile(0.999, 0.0001)
+    .register()
+
   /** Sensor liveness gauge: 1 = ALIVE, 0 = MISSING. One label series per device. */
   val sensorUp: Gauge = Gauge.build()
     .name("subscriber_sensor_up")
