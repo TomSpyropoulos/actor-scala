@@ -72,14 +72,19 @@ class TopicActor(topic: String) extends Actor with ActorLogging {
         (status, lastStatus != Some(status))
       }
 
+      val deviceName = topic.stripPrefix("sensors/")
+
       if (shouldInsert) {
         log.warning("Sensor {} is now {}", topic, newStatus)
-        val deviceName = topic.stripPrefix("sensors/")
         Database.insertStatus(deviceName, newStatus).failed.foreach { err =>
           log.error(s"Failed to insert status for $topic: ${err.getMessage}")
         }
         lastStatus = Some(newStatus)
       }
+
+      // Always update the gauge so Prometheus always reflects the current state,
+      // even when the status hasn't changed since the last heartbeat.
+      Metrics.sensorUp.labels(deviceName).set(if (newStatus == "ALIVE") 1 else 0)
     case other =>
       log.warning("Unknown message received by TopicActor: {}", other)
   }

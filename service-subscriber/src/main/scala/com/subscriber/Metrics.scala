@@ -1,6 +1,7 @@
 package com.subscriber
 
 import io.prometheus.client.Counter
+import io.prometheus.client.Gauge
 import io.prometheus.client.Summary
 import io.prometheus.client.exporter.HTTPServer
 import io.prometheus.client.hotspot.DefaultExports
@@ -40,6 +41,13 @@ object Metrics {
     .quantile(0.95, 0.01)
     .quantile(0.99, 0.001)
     .quantile(0.999, 0.0001)
+    .register()
+
+  /** Sensor liveness gauge: 1 = ALIVE, 0 = MISSING. One label series per device. */
+  val sensorUp: Gauge = Gauge.build()
+    .name("subscriber_sensor_up")
+    .help("Sensor liveness: 1 = ALIVE, 0 = MISSING.")
+    .labelNames("device")
     .register()
 
   private var server: Option[HTTPServer] = None
