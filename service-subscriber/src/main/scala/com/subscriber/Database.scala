@@ -1,67 +1,20 @@
 package com.subscriber
 
-import com.zaxxer.hikari.HikariConfig
-import com.zaxxer.hikari.HikariDataSource
-import java.time.OffsetDateTime
-
-import scala.concurrent.{ExecutionContext, Future}
-
-/** Database handler for TimescaleDB using HikariCP for connection pooling. */
+/** Selects and instantiates the active database backend at JVM startup.
+  *
+  * The backend is chosen based on the DB_BACKEND environment variable
+  * (default: "timescaledb"). The single instance is created here and passed
+  * to every TopicActor via constructor injection in [[Main]], so the backend
+  * can be swapped without touching actor code.
+  *
+  * To add a new backend: implement [[DatabaseBackend]] and add a case below.
+  */
 object Database {
-  private val config = new HikariConfig()
-  config.setJdbcUrl(
-    sys.env.getOrElse("DB_URL", "jdbc:postgresql://localhost:5432/epu")
-  )
-  config.setUsername(sys.env.getOrElse("DB_USER", "postgres"))
-  config.setPassword(sys.env.getOrElse("DB_PASSWORD", "postgres"))
-  config.addDataSourceProperty("cachePrepStmts", "true")
-  config.addDataSourceProperty("prepStmtCacheSize", "250")
-  config.addDataSourceProperty("prepStmtCacheSqlLimit", "2048")
-  // Optimize connection pool size for blocking I/O dispatcher
-  config.setMaximumPoolSize(20)
-
-  val dataSource = new HikariDataSource(config)
-
-  /** Inserts a sensor reading into the Data table asynchronously.
-    * @param deviceName
-    *   The name of the device sending the data.
-    * @param value
-    *   The sensor reading value.
-    * @param timestamp
-    *   The ISO-8601 timestamp of the reading.
-    * @param ec
-    *   Execution context (should be a dedicated dispatcher for blocking I/O).
-    */
-  def insertData(deviceName: String, value: Int, timestamp: String)(implicit ec: ExecutionContext): Future[Unit] = Future {
-    val conn = dataSource.getConnection
-    try {
-      val stmt = conn.prepareStatement(
-        "INSERT INTO Data (DeviceName, Value, Timestamp) VALUES (?, ?, ?)"
-      )
-      stmt.setString(1, deviceName)
-      stmt.setInt(2, value)
-      // Parse ISO timestamp to OffsetDateTime
-      val ts = OffsetDateTime.parse(timestamp)
-      stmt.setObject(3, ts)
-      stmt.executeUpdate()
-      ()
-    } finally {
-      conn.close()
+  val backend: DatabaseBackend =
+    sys.env.getOrElse("DB_BACKEND", "timescaledb") match {
+      case "timescaledb" => new TimescaleDBBackend()
+      case unknown =>
+        throw new IllegalArgumentException(
+          s"Unknown DB_BACKEND: '$unknown'. Supported: timescaledb")
     }
-  }
-
-  def insertStatus(deviceName: String, status: String)(implicit ec: ExecutionContext): Future[Unit] = Future {
-    val conn = dataSource.getConnection
-    try {
-      val stmt = conn.prepareStatement(
-        "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)"
-      )
-      stmt.setString(1, deviceName)
-      stmt.setString(2, status)
-      stmt.executeUpdate()
-      ()
-    } finally {
-      conn.close()
-    }
-  }
 }

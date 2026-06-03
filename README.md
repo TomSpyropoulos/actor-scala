@@ -8,7 +8,7 @@ The system consists of the following components:
 
 1.  **[Service Publisher](service-publisher/publisher.md)**: A Scala application that simulates IoT sensors. Each instance generates 1000 sensor readings (JSON) per second and publishes them to an MQTT broker.
 2.  **Mosquitto MQTT Broker**: Acts as the central messaging hub, facilitating communication between publishers and subscribers.
-3.  **[Service Subscriber](service-subscriber/subscriber.md)**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp).
+3.  **[Service Subscriber](service-subscriber/subscriber.md)**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp). DB writes are handled through a pluggable `DatabaseBackend` trait, with the active implementation selected at runtime via `DB_BACKEND`.
 5.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
 6.  **Grafana**: Provides a visual dashboard for monitoring container resource usage and application-specific metrics.
 7.  **TimescaleDB**: A PostgreSQL extension for high-performance time-series data storage.
@@ -45,6 +45,36 @@ docker compose up -d --build --scale publisher=3
     docker logs -f subscriber
     ```
 
+## 🔬 Benchmarking
+
+The subscriber's DB write path is decoupled from any specific database through a pluggable `DatabaseBackend` trait. The active backend is selected at startup via the `DB_BACKEND` environment variable, with no recompilation required.
+
+### Running a benchmark scenario
+
+Scenario files in `scenarios/` define the full environment for one benchmark run:
+
+```bash
+./bench.sh scenarios/timescale.env
+```
+
+This builds and starts the full stack with the given configuration. To stop:
+
+```bash
+docker compose down
+```
+
+### Available scenarios
+
+| File | Backend |
+|------|---------|
+| `scenarios/timescale.env` | TimescaleDB (baseline) |
+
+### Supported `DB_BACKEND` values
+
+| Value | Class | Description |
+|-------|-------|-------------|
+| `timescaledb` (default) | `TimescaleDBBackend` | PostgreSQL/TimescaleDB via HikariCP + JDBC |
+
 ## 🧠 Deep Dive: Pekko Executors
 
 ### Fork-Join vs. Virtual Threads
@@ -67,8 +97,8 @@ The current implementation uses the **Fork-Join Executor**. To experiment with V
 
 - **Language**: Scala 3
 - **Concurrency**: Pekko (Actors & Streams)
-- **Messaging**: MQTT (Mosquitto / via Alpakka,Pekko Connectors)
+- **Messaging**: MQTT (Mosquitto / via Alpakka, Pekko Connectors)
 - **JSON**: Circe
 - **Observability**: Prometheus & Grafana
-- **Database**: TimescaleDB
+- **Database**: Pluggable backends (TimescaleDB default)
 - **Deployment**: Docker & Docker Compose

@@ -23,6 +23,7 @@ object Main {
     // Initialize Pekko system and context
     implicit val system: ActorSystem = ActorSystem("subscriber")
     implicit val ec = system.dispatcher
+    val db = Database.backend  // backend selected via DB_BACKEND; shared across all TopicActors
 
     // Configure connection to the MQTT broker
     val mqttConnectionSettings = MqttConnectionSettings(
@@ -54,7 +55,7 @@ object Main {
       val topic = msg.topic
       val actorRef = actors.getOrElseUpdate(
         topic,
-        system.actorOf(Props(new TopicActor(topic)))
+        system.actorOf(Props(new TopicActor(topic, db)))
       )
       actorRef ! msg
     })
@@ -67,6 +68,7 @@ object Main {
     // Register a shutdown hook
     sys.addShutdownHook {
       Metrics.stop()
+      db.close()
       system.terminate()
       Await.result(system.whenTerminated, 5.seconds)
     }
