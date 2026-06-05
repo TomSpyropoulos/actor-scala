@@ -8,11 +8,10 @@ The system consists of the following components:
 
 1.  **[Service Publisher](service-publisher/publisher.md)**: A Scala application that simulates IoT sensors. Each instance generates 1000 sensor readings (JSON) per second and publishes them to an MQTT broker.
 2.  **Mosquitto MQTT Broker**: Acts as the central messaging hub, facilitating communication between publishers and subscribers.
-3.  **[Service Subscriber](service-subscriber/subscriber.md)**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp). DB writes are handled through a pluggable `DatabaseBackend` trait, with the active implementation selected at runtime via `DB_BACKEND`.
-5.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
-6.  **Grafana**: Provides a visual dashboard for monitoring container resource usage and application-specific metrics.
-7.  **TimescaleDB**: A PostgreSQL extension for high-performance time-series data storage.
-
+3.  **[Service Subscriber](service-subscriber/)**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp). DB writes are handled through a pluggable `DatabaseBackend` trait, with the active implementation selected at runtime via `DB_BACKEND`.
+4.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
+5.  **Grafana**: Provides a visual dashboard for monitoring container resource usage and application-specific metrics.
+6.  **TimescaleDB**: A PostgreSQL extension for high-performance time-series data storage.
 
 ## 🚀 Getting Started
 
@@ -25,7 +24,7 @@ The system consists of the following components:
 
 To start the entire stack with 3 simulated sensors (publisher instances):
 
-```bash 
+```bash
 docker compose up -d --build --scale publisher=3
 ```
 
@@ -40,7 +39,7 @@ docker compose up -d --build --scale publisher=3
     - `subscriber_e2e_latency_milliseconds` — publisher→DB latency (p50/p95/p99/p999).
     - `subscriber_db_write_latency_milliseconds` — subscriber→DB write latency (p50/p95/p99/p999).
     - `subscriber_sensor_up{device="<name>"}` — per-sensor liveness gauge (1 = ALIVE, 0 = MISSING).
-- **Subscriber Logs**: View the aggregated state for each sensor:
+- **Subscriber Logs**:
     ```bash
     docker logs -f subscriber
     ```
@@ -49,25 +48,52 @@ docker compose up -d --build --scale publisher=3
 
 The subscriber's DB write path is decoupled from any specific database through a pluggable `DatabaseBackend` trait. The active backend is selected at startup via the `DB_BACKEND` environment variable, with no recompilation required.
 
-### Running a benchmark scenario
+### How `bench.sh` works
 
-Scenario files in `scenarios/` define the full environment for one benchmark run:
+`bench.sh` takes a scenario file, sources it as environment variables, starts the full Docker Compose stack with the configured number of publisher instances (`PUBLISHER_COUNT`), then polls the subscriber's Prometheus endpoint every `METRICS_INTERVAL` seconds (default: 10) and prints a live metrics table until you press `Ctrl+C`, which triggers a clean `docker compose down -v`.
+
+```
+=== Benchmark: timescale_batch.env ===
+  Publishers  : 5  (~5000 msg/s)
+  Batch       : true  (size=100, timeout=1000ms)
+  DB pool     : 5 workers
+  Backend     : timescaledb
+
+time        total       rate/s      e2e p50    e2e p99    db p50
+----------  ----------  ----------  ----------  ----------  ----------
+14:22:01    12450       1245        28.3 ms     54.1 ms     27.1 ms
+14:22:11    24901       2445        27.9 ms     53.8 ms     26.8 ms
+```
+
+### Running a scenario
 
 ```bash
+chmod +x bench.sh
 ./bench.sh scenarios/timescale.env
 ```
 
-This builds and starts the full stack with the given configuration. To stop:
-
-```bash
-docker compose down
-```
+Press `Ctrl+C` to stop the stack when done.
 
 ### Available scenarios
 
-| File | Backend |
-|------|---------|
-| `scenarios/timescale.env` | TimescaleDB (baseline) |
+| File | Publishers | Batch | DB pool | Load |
+|------|-----------|-------|---------|------|
+| `scenarios/timescale.env` | 5 | off | 20 | ~5k msg/s baseline |
+| `scenarios/timescale_batch.env` | 5 | on (100 rows, 1s) | 5 | ~5k msg/s with batching |
+| `scenarios/timescale_stress.env` | 20 | off | 20 | ~20k msg/s stress |
+| `scenarios/timescale_batch_stress.env` | 20 | on (100 rows, 0.5s) | 5 | ~20k msg/s with batching |
+
+### Scenario variables reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PUBLISHER_COUNT` | `1` | Number of publisher containers (`--scale publisher=N`) |
+| `DB_BACKEND` | `timescaledb` | Backend implementation to use |
+| `DB_POOL_SIZE` | `20` | Connection pool size (HikariCP in non-batch mode; actor pool in batch mode) |
+| `BATCH_ENABLED` | `false` | Enable row buffering |
+| `BATCH_SIZE` | `100` | Flush when buffer reaches this many rows |
+| `BATCH_TIMEOUT_MS` | `1000` | Flush after this many ms even if buffer is not full |
+| `METRICS_INTERVAL` | `10` | Seconds between metric snapshots in the bench output |
 
 ### Supported `DB_BACKEND` values
 
@@ -82,7 +108,7 @@ docker compose down
 The project explores different execution models for Pekko Actors:
 
 #### Fork-Join Executor (Default)
-In the default implementation, actors are dispatched on a `fork-join-executor`. Actors are treated as tasks pushed onto a deque and executed on a fixed pool of platform threads. 
+In the default implementation, actors are dispatched on a `fork-join-executor`. Actors are treated as tasks pushed onto a deque and executed on a fixed pool of platform threads.
 - **Pros**: Highly efficient for non-blocking workloads.
 - **Cons**: If an actor performs a blocking I/O operation, it stalls the underlying platform thread, potentially leading to thread starvation.
 
@@ -91,7 +117,7 @@ Pekko 1.2.0+ and Java 21/24 introduce support for `virtual-thread-executor`. Vir
 - **Behavior**: When a virtual thread blocks, it is unpinned from its carrier platform thread, allowing other virtual threads to continue execution.
 - **Advantage**: Allows writing simple, blocking code while maintaining the scalability of asynchronous systems.
 
-The current implementation uses the **Fork-Join Executor**. To experiment with Virtual Threads, the `application.conf` (or actor system configuration) can be adjusted to use the `pekko.dispatch.VirtualThreadExecutorConfigurator`.
+The current implementation uses the **Fork-Join Executor**. To experiment with Virtual Threads, the `application.conf` can be adjusted to use the `pekko.dispatch.VirtualThreadExecutorConfigurator`.
 
 ## 🛠️ Tech Stack
 

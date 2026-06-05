@@ -1,16 +1,11 @@
 package com.subscriber
 
-/** Selects and instantiates the active database backend at JVM startup.
-  *
-  * The backend is chosen based on the DB_BACKEND environment variable
-  * (default: "timescaledb"). The single instance is created here and passed
-  * to every TopicActor via constructor injection in [[Main]], so the backend
-  * can be swapped without touching actor code.
-  *
-  * To add a new backend: implement [[DatabaseBackend]] and add a case below.
-  */
+import org.apache.pekko.actor.ActorSystem
+
+// Reads DB_BACKEND env var and returns the matching backend instance; single call site in Main
 object Database {
-  val backend: DatabaseBackend =
+  // Fails fast on an unrecognised backend name so misconfiguration is caught at startup
+  def backend(implicit system: ActorSystem): DatabaseBackend =
     sys.env.getOrElse("DB_BACKEND", "timescaledb") match {
       case "timescaledb" => new TimescaleDBBackend()
       case unknown =>
