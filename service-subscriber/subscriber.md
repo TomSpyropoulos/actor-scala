@@ -16,14 +16,65 @@ The **Service Subscriber** is a Scala-based application responsible for ingestin
 4. **Metrics and Observability:**
    The service exposes a metrics endpoint for [Prometheus](https://prometheus.io/) to scrape, providing visibility into the pipeline's performance.
 
+## 📨 Message Flow
+
+```
+MQTT broker
+    │
+    ▼
+Alpakka MqttSource (Pekko Stream, bufferSize=1024)
+    │
+    ▼
+Sink.foreach { msg =>
+    TrieMap lookup / getOrElseUpdate TopicActor
+         │
+    actorRef ! msg
+}
+    │
+    ▼
+TopicActor.receive(MqttMessage)
+├─ Circe JSON decode
+├─ Prometheus metrics (subscriber latency)
+└─ db.insertData (Future on blocking-io-dispatcher)
+        │
+    Database.backend (selected via DB_BACKEND)
+        │
+    TimescaleDBBackend.insertData
+    HikariCP: acquire connection
+    JDBC prepareStatement + executeUpdate
+        │
+      TimescaleDB
+        │
+    Future completes
+    └─ Prometheus metrics (e2e + db write latency)
+```
+
+Heartbeat path (every 5 seconds via `system.scheduler`):
+
+```
+system.scheduler
+    │
+    ▼
+actors.values.foreach(_ ! "heartbeat")
+    │
+    ▼
+TopicActor.receive("heartbeat")
+├─ check lastSeen vs now → ALIVE / MISSING
+├─ db.insertStatus (only on status change)
+└─ Metrics.sensorUp.set(...)
+```
+
 ## 🏗️ Architecture
 
 The application is built around the **Pekko** ecosystem:
 
 - **Pekko Actor System**: The root for managing all concurrent processes and actors.
-- **MQTT Connector**: Utilizes Alpakka MQTT for robust connectivity to the Mosquitto broker.
-- **Topic Actors**: Dynamically spawned actors that handle state management and processing per sensor topic.
-- **Connection Pooling**: Uses HikariCP to manage connections to TimescaleDB, ensuring optimal throughput.
+- **MQTT Connector**: Utilizes Alpakka MQTT for robust connectivity to the Mosquitto broker. Messages arrive via a Pekko Stream (`MqttSource.atMostOnce`) and are dispatched to actors via `Sink.foreach`.
+- **Topic Actors (`TopicActor`)**: Dynamically spawned actors that handle state management and processing per sensor topic. They receive the `DatabaseBackend` instance via constructor injection, so the backend can be swapped without modifying the actor.
+- **Actor Registry**: A `TrieMap[String, ActorRef]` in `Main` maps topic strings to their actor. `getOrElseUpdate` is used for lock-free creation on first sight of a new topic.
+- **DB Backend Trait (`DatabaseBackend`)**: A trait defining the pluggable interface for database writes — `insertData`, `insertStatus`, and `close`. All implementations must be thread-safe, as the single instance is shared across all `TopicActor` instances running concurrently. The active backend is selected at JVM startup by the `Database` object via the `DB_BACKEND` environment variable.
+- **DB Backend Selector (`Database`)**: A singleton object that reads `DB_BACKEND` (default: `"timescaledb"`) and instantiates the matching backend once. The instance is passed to every `TopicActor` at construction time.
+- **TimescaleDB Backend (`TimescaleDBBackend`)**: The concrete implementation of `DatabaseBackend` for TimescaleDB. Manages a HikariCP pool of up to 20 JDBC connections with prepared statement caching (`cachePrepStmts`). Each write acquires a connection, executes the statement, and releases it. Writes return a `Future[Unit]` running on a dedicated `blocking-io-dispatcher` to avoid stalling the default fork-join pool.
 
 ## 📊 Metrics Tracking
 
