@@ -25,13 +25,16 @@ object Main {
   /** Generates a JSON payload representing a sensor reading.
     * @param deviceName
     *   Unique identifier for the simulated device.
+    * @param paddingBytes
+    *   Extra filler bytes added as a "padding" field, for payload-size benchmarks. 0 omits the field.
     * @return
-    *   JSON string containing device name, timestamp, and a random value.
+    *   JSON string containing device name, timestamp, a random value, and optional padding.
     */
-  def data(deviceName: String): String = {
+  def data(deviceName: String, paddingBytes: Int): String = {
     val timestampz = Instant.now().toString
     val value = Random().nextInt(10) + 1
-    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": $value}"""
+    val padding = if (paddingBytes > 0) s""", "padding":"${"x" * paddingBytes}"""" else ""
+    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": $value$padding}"""
   }
 
   def main(args: Array[String]): Unit = {
@@ -42,6 +45,7 @@ object Main {
 
     // Retrieve the container's hostname to create unique client IDs and topics
     val hostname = java.net.InetAddress.getLocalHost.getHostName
+    val paddingBytes = sys.env.getOrElse("PAYLOAD_PADDING_BYTES", "0").toInt
 
     // Configure MQTT connection settings for the Mosquitto broker
     val connectionSettings = MqttConnectionSettings(
@@ -63,7 +67,7 @@ object Main {
       Source
         .repeat(())
         .throttle(1000, 1.second)
-        .map(_ => data(s"sensor$hostname"))
+        .map(_ => data(s"sensor$hostname", paddingBytes))
         .wireTap(payload =>
           log.info(s"Payload created: $payload")
         )
