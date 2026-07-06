@@ -17,19 +17,10 @@ import scala.concurrent.duration.DurationInt
 import scala.util.Random
 import java.time.Instant
 
-/** Main entry point for the Publisher service. This service simulates an IoT
-  * sensor by generating periodic data and publishing it to MQTT.
-  */
+// Publisher entry point: simulates an IoT sensor by generating periodic readings and publishing them to MQTT
 object Main {
 
-  /** Generates a JSON payload representing a sensor reading.
-    * @param deviceName
-    *   Unique identifier for the simulated device.
-    * @param paddingBytes
-    *   Extra filler bytes added as a "padding" field, for payload-size benchmarks. 0 omits the field.
-    * @return
-    *   JSON string containing device name, timestamp, a random value, and optional padding.
-    */
+  // Builds a JSON sensor reading; paddingBytes > 0 appends a filler "padding" field for payload-size benchmarks
   def data(deviceName: String, paddingBytes: Int): String = {
     val timestampz = Instant.now().toString
     val value = Random().nextInt(10) + 1
@@ -37,6 +28,7 @@ object Main {
     s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": $value$padding}"""
   }
 
+  // Wires the Pekko stream that generates readings and publishes them to MQTT, then runs until the JVM exits
   def main(args: Array[String]): Unit = {
     // Initialize Pekko ActorSystem and ExecutionContext
     implicit val system: ActorSystem = ActorSystem("publisher")

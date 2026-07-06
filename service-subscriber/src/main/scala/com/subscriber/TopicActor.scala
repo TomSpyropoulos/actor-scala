@@ -12,6 +12,10 @@ class TopicActor(topic: String, db: DatabaseBackend) extends Actor with ActorLog
   // Use a dedicated dispatcher for blocking DB operations to avoid starvation
   implicit val blockingDispatcher: ExecutionContext = context.system.dispatchers.lookup("pekko.actor.blocking-io-dispatcher")
 
+  // A sensor silent for longer than this at heartbeat time is declared MISSING. Coupled with the
+  // heartbeat cadence in Main (scheduleWithFixedDelay, 5s) that drives how often this check runs.
+  private val LivenessTimeoutSeconds = 1L
+
   var sum = 0
   var lastSeen: Long = 0L
   var lastStatus: Option[String] = None
@@ -60,7 +64,7 @@ class TopicActor(topic: String, db: DatabaseBackend) extends Actor with ActorLog
         ("MISSING", lastStatus != Some("MISSING"))
       } else {
         val diff   = now - lastSeen
-        val status = if (diff > 1) "MISSING" else "ALIVE"
+        val status = if (diff > LivenessTimeoutSeconds) "MISSING" else "ALIVE"
         (status, lastStatus != Some(status))
       }
 

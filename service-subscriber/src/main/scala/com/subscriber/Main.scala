@@ -40,6 +40,11 @@ object Main {
         bufferSize = 1024
       )
 
+    // How often every actor is pinged to re-evaluate its sensor's liveness. Coupled with
+    // LivenessTimeoutSeconds (1s) in TopicActor, which sets how long a sensor may be silent
+    // before this check flips it to MISSING — keep the two in sync when tuning sensitivity.
+    val heartbeatInterval = 5.seconds
+
     val actors = TrieMap.empty[String, ActorRef]
 
     mqttSource.runWith(Sink.foreach { msg =>
@@ -51,7 +56,7 @@ object Main {
       actorRef ! msg
     })
 
-    system.scheduler.scheduleWithFixedDelay(5.seconds, 5.seconds) { () =>
+    system.scheduler.scheduleWithFixedDelay(heartbeatInterval, heartbeatInterval) { () =>
       actors.values.foreach(_ ! "heartbeat")
     }
 
