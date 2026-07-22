@@ -23,14 +23,14 @@ flowchart TD
     A[MQTT Broker] --> B["Alpakka MqttSource\nbufferSize=1024"]
     B --> C["Sink.foreach\nTrieMap lookup / getOrElseUpdate TopicActor"]
     C --> D[TopicActor.receive MqttMessage]
-    D --> E["Circe JSON decode\nPrometheus: request count + subscriber latency"]
+    D --> E["Circe JSON decode\nPrometheus: requests_total (ingest) + subscriber latency"]
     E --> F["db.insertData\npublisherEpochMs, subscriberReceiveMs"]
     F --> G[TimescaleDBBackend.insertData]
     G --> H{BATCH_ENABLED}
-    H -->|false| I["HikariCP: acquire connection\nJDBC prepareStatement + execute\nRecord e2e + db_write latency inline"]
+    H -->|false| I["HikariCP: acquire connection\nJDBC prepareStatement + execute\nRecord committed_total (+1) + e2e + db_write inline"]
     H -->|true| J["round-robin select DbWriterActor\nactor ! InsertRow\nFuture.successful immediately"]
     I --> K[(TimescaleDB)]
-    J --> L["DbWriterActor buffers row\nflush on batchSize or timeout\nmulti-row INSERT\nRecord latency per row at flush"]
+    J --> L["DbWriterActor buffers row\nflush on batchSize or timeout\nmulti-row INSERT\nRecord committed_total (+batch size) + latency per row at flush"]
     L --> K
 ```
 
@@ -53,7 +53,7 @@ The application is built around the **Pekko** ecosystem:
 
 - **Pekko Actor System**: The root for managing all concurrent processes and actors.
 - **MQTT Connector**: Utilizes Alpakka MQTT for robust connectivity to the Mosquitto broker. Messages arrive via a Pekko Stream (`MqttSource.atMostOnce`) and are dispatched to actors via `Sink.foreach`.
-- **Topic Actors (`TopicActor`)**: Dynamically spawned actors that handle state management and processing per sensor topic. They receive the `DatabaseBackend` instance via constructor injection, so the backend can be swapped without modifying the actor. `TopicActor` records request count and subscriber-receive latency; **e2e and db_write latency recording is delegated to the backend** so it works correctly in both batch and non-batch modes.
+- **Topic Actors (`TopicActor`)**: Dynamically spawned actors that handle state management and processing per sensor topic. They receive the `DatabaseBackend` instance via constructor injection, so the backend can be swapped without modifying the actor. `TopicActor` records the ingest count and subscriber-receive latency; **the committed-rows count and the e2e/db_write latency recording are delegated to the backend** so they work correctly in both batch and non-batch modes.
 - **Actor Registry**: A `TrieMap[String, ActorRef]` in `Main` maps topic strings to their actor. `getOrElseUpdate` is used for lock-free creation on first sight of a new topic.
 - **DB Backend Trait (`DatabaseBackend`)**: A trait defining the pluggable interface for database writes — `insertData`, `insertStatus`, and `close`. `insertData` takes `publisherEpochMs` and `subscriberReceiveMs` so the backend can compute and record e2e and db_write latency itself (at Future completion in non-batch mode, or at batch flush time in batch mode). All implementations must be thread-safe, as the single instance is shared across all `TopicActor` instances running concurrently. The active backend is selected at JVM startup by the `Database` object via the `DB_BACKEND` environment variable.
 - **DB Backend Selector (`Database`)**: An object with a `def backend(implicit system: ActorSystem)` that reads `DB_BACKEND` (default: `"timescaledb"`) and instantiates the matching backend. The `ActorSystem` implicit is required by backends that create child actors. The instance is passed to every `TopicActor` at construction time.
@@ -67,7 +67,8 @@ The application is built around the **Pekko** ecosystem:
 
 The service exposes the following Prometheus metrics on port `8081` (raw endpoint: `http://localhost:8081/metrics`):
 
-- `subscriber_requests_total`: Total count of MQTT messages processed.
+- `subscriber_requests_total`: Total count of MQTT messages **ingested** — incremented on receive, before the row reaches the database.
+- `subscriber_committed_total`: Total rows **committed** to the database — incremented on the DB write ack (by the batch size in batching mode, by 1 otherwise). Compare against `subscriber_requests_total`: the two track each other while the DB keeps up, and diverge once the write path saturates.
 - `subscriber_request_latency_milliseconds`: Latency (processing time − sensor timestamp) with quantiles (p50, p95, p99, p999).
 - `subscriber_e2e_latency_milliseconds`: End-to-end latency (DB ack − sensor timestamp) with quantiles (p50, p95, p99, p999).
 - `subscriber_db_write_latency_milliseconds`: Latency from subscriber receive to DB write ack, with quantiles (p50, p95, p99, p999).
