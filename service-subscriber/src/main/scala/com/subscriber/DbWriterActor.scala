@@ -53,6 +53,8 @@ class DbWriterActor(batchSize: Int, timeoutMs: Long) extends Actor with ActorLog
         stmt.setObject(i * 3 + 3, OffsetDateTime.parse(r.timestamp))
       }
       stmt.executeUpdate()
+      // Count the whole batch as committed only after a successful executeUpdate (a failure skips this via catch)
+      Metrics.committedCount.inc(rows.size.toDouble)
       val ackMs = System.currentTimeMillis()
       rows.foreach { r =>
         Metrics.e2eLatency.observe(math.max(0, ackMs - r.publisherEpochMs))

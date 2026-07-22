@@ -13,6 +13,12 @@ object Metrics {
     .help("Total requests processed by the subscriber.")
     .register()
 
+  // Rows actually committed to the DB, incremented on the write-ack path (separate from ingest count)
+  val committedCount: Counter = Counter.build()
+    .name("subscriber_committed_total")
+    .help("Total rows committed to the database.")
+    .register()
+
   val requestLatency: Summary = Summary.build()
     .name("subscriber_request_latency_milliseconds")
     .help("Latency of requests in milliseconds (Now - Payload Timestamp).")
