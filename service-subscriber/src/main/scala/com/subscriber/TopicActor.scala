@@ -3,7 +3,7 @@ package com.subscriber
 import org.apache.pekko.actor.{Actor, ActorLogging}
 import org.apache.pekko.stream.connectors.mqtt.MqttMessage
 import io.circe.parser._
-import java.time.OffsetDateTime
+import java.time.{Instant, OffsetDateTime}
 
 import scala.concurrent.ExecutionContext
 
@@ -32,20 +32,22 @@ class TopicActor(topic: String, db: DatabaseBackend) extends Actor with ActorLog
 
           (deviceNameOpt, valueOpt, tsOpt) match {
             case (Some(name), Some(v), Some(ts)) =>
-              val startTime          = OffsetDateTime.parse(ts)
-              val now                = OffsetDateTime.now()
-              val publisherEpochMs   = startTime.toInstant.toEpochMilli
-              val subscriberReceiveMs = now.toInstant.toEpochMilli
-              val latency            = (subscriberReceiveMs - publisherEpochMs).toDouble
+              val publisherEpochUs    = Clock.micros(OffsetDateTime.parse(ts).toInstant)
+              // Stamped after the parse, matching ProcessingStartUs in the Erlang worker so db_write
+              // latency spans the same work in both arms
+              val receivedAt          = Instant.now()
+              val subscriberReceiveUs = Clock.micros(receivedAt)
+              val latency             = math.max(0L, subscriberReceiveUs - publisherEpochUs) / 1000.0
 
               Metrics.requestCount.inc()
               Metrics.requestLatency.observe(latency)
 
               sum     += v
-              lastSeen = java.time.Instant.now().getEpochSecond
+              // Reuses receivedAt; the drift is nothing against a 1s liveness timeout
+              lastSeen = receivedAt.getEpochSecond
 
               // Backend owns e2e and db_write latency recording.
-              db.insertData(name, v, ts, publisherEpochMs, subscriberReceiveMs)
+              db.insertData(name, v, ts, publisherEpochUs, subscriberReceiveUs)
                 .failed.foreach { err =>
                   log.error(s"Failed to insert data for topic $topic: ${err.getMessage}")
                 }

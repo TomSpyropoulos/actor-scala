@@ -55,11 +55,11 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   // Routes to DbWriterActor (batch) or executes inline via HikariCP (non-batch); records latency after DB ack
   def insertData(deviceName: String, value: Int, timestamp: String,
-                 publisherEpochMs: Long, subscriberReceiveMs: Long)(
+                 publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {
     if (batchEnabled) {
       val idx = math.abs(counter.getAndIncrement() % poolSize)
-      writers(idx) ! InsertRow(deviceName, value, timestamp, publisherEpochMs, subscriberReceiveMs)
+      writers(idx) ! InsertRow(deviceName, value, timestamp, publisherEpochUs, subscriberReceiveUs)
       Future.successful(())
     } else {
       Future {
@@ -73,9 +73,9 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
           stmt.executeUpdate()
           stmt.close()
           Metrics.committedCount.inc()   // 1 row committed
-          val ackMs = System.currentTimeMillis()
-          Metrics.e2eLatency.observe(math.max(0, ackMs - publisherEpochMs))
-          Metrics.dbWriteLatency.observe(math.max(0, ackMs - subscriberReceiveMs))
+          val ackUs = Clock.nowMicros()
+          Metrics.e2eLatency.observe(math.max(0L, ackUs - publisherEpochUs) / 1000.0)
+          Metrics.dbWriteLatency.observe(math.max(0L, ackUs - subscriberReceiveUs) / 1000.0)
         } finally {
           conn.close()
         }

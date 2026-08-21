@@ -16,16 +16,23 @@ import scala.concurrent.{Future, Await}
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
 import java.time.Instant
+import java.time.format.{DateTimeFormatter, DateTimeFormatterBuilder}
 
 // Publisher entry point: simulates an IoT sensor by generating periodic readings and publishing them to MQTT
 object Main {
 
-  // Builds a JSON sensor reading; paddingBytes > 0 appends a filler "padding" field for payload-size benchmarks
+  // Fixed-width fraction, unlike Instant.toString, which elides trailing zeros and varies the payload size
+  private val IsoMicros: DateTimeFormatter =
+    new DateTimeFormatterBuilder().appendInstant(6).toFormatter
+
+  // Builds a JSON sensor reading; paddingBytes > 0 appends a filler "padding" field for payload-size benchmarks.
+  // These exact bytes are the shared wire format -- byte-identical to handle_info(publish_tick, ...) in
+  // actor-erlang/service_publisher/src/service_publisher_srv.erl; keep the two in sync.
   def data(deviceName: String, paddingBytes: Int): String = {
-    val timestampz = Instant.now().toString
+    val timestampz = IsoMicros.format(Instant.now())
     val value = Random().nextInt(10) + 1
-    val padding = if (paddingBytes > 0) s""", "padding":"${"x" * paddingBytes}"""" else ""
-    s"""{"device_name": "$deviceName", "timestamp":"$timestampz", "value": $value$padding}"""
+    val padding = if (paddingBytes > 0) s""","padding":"${"x" * paddingBytes}"""" else ""
+    s"""{"device_name":"$deviceName","timestamp":"$timestampz","value":$value$padding}"""
   }
 
   // Wires the Pekko stream that generates readings and publishes them to MQTT, then runs until the JVM exits

@@ -8,7 +8,7 @@ import scala.collection.mutable.ListBuffer
 import scala.concurrent.duration._
 
 case class InsertRow(deviceName: String, value: Int, timestamp: String,
-                     publisherEpochMs: Long, subscriberReceiveMs: Long)
+                     publisherEpochUs: Long, subscriberReceiveUs: Long)
 case object Flush
 
 // Owns one JDBC connection and one row buffer; flushes as a single multi-row INSERT on batchSize or timeout
@@ -55,10 +55,10 @@ class DbWriterActor(batchSize: Int, timeoutMs: Long) extends Actor with ActorLog
       stmt.executeUpdate()
       // Count the whole batch as committed only after a successful executeUpdate (a failure skips this via catch)
       Metrics.committedCount.inc(rows.size.toDouble)
-      val ackMs = System.currentTimeMillis()
+      val ackUs = Clock.nowMicros()
       rows.foreach { r =>
-        Metrics.e2eLatency.observe(math.max(0, ackMs - r.publisherEpochMs))
-        Metrics.dbWriteLatency.observe(math.max(0, ackMs - r.subscriberReceiveMs))
+        Metrics.e2eLatency.observe(math.max(0L, ackUs - r.publisherEpochUs) / 1000.0)
+        Metrics.dbWriteLatency.observe(math.max(0L, ackUs - r.subscriberReceiveUs) / 1000.0)
       }
     } catch {
       case e: Exception =>
