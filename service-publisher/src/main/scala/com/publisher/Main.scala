@@ -53,16 +53,17 @@ object Main {
     // Define the Pekko Stream source:
     // 1. Source.repeat + throttle(1000, 1.second): generates 1000 signals per second
     // 2. map: Transforms the signal into a JSON data payload
-    // 3. wireTap: Asynchronously log the payload (only if debug is enabled to save perf)
-    // 4. map: Wraps the payload into an MqttMessage
+    // 3. map: Wraps the payload into an MqttMessage
+    //
+    // Deliberately no per-message logging in this stream. A wireTap logging each payload
+    // interpolated the whole payload (padding included) once per message at 1000 msg/s, and
+    // the Erlang publisher has no equivalent -- it was a one-sided cost that made the two
+    // benchmark arms incomparable. Keep any debugging output out of the hot path.
     lazy val mqttSource =
       Source
         .repeat(())
         .throttle(1000, 1.second)
         .map(_ => data(s"sensor$hostname", paddingBytes))
-        .wireTap(payload =>
-          log.info(s"Payload created: $payload")
-        )
         .map { payload =>
           MqttMessage(s"sensors/sensor$hostname", ByteString(payload))
         }
