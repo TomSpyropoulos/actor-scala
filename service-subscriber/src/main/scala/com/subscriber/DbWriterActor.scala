@@ -53,13 +53,9 @@ class DbWriterActor(batchSize: Int, timeoutMs: Long) extends Actor with ActorLog
         stmt.setObject(i * 3 + 3, OffsetDateTime.parse(r.timestamp))
       }
       stmt.executeUpdate()
-      // Count the whole batch as committed only after a successful executeUpdate (a failure skips this via catch)
-      Metrics.committedCount.inc(rows.size.toDouble)
-      val ackUs = Clock.nowMicros()
-      rows.foreach { r =>
-        Metrics.e2eLatency.observe(math.max(0L, ackUs - r.publisherEpochUs) / 1000.0)
-        Metrics.dbWriteLatency.observe(math.max(0L, ackUs - r.subscriberReceiveUs) / 1000.0)
-      }
+      // Only after a successful executeUpdate — a failure skips this via catch, so a failed batch
+      // is never counted as committed.
+      Metrics.recordCommitBatch(rows)(_.publisherEpochUs, _.subscriberReceiveUs)
     } catch {
       case e: Exception =>
         log.error(s"Batch insert failed: ${e.getMessage}")

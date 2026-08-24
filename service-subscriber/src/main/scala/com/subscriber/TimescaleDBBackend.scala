@@ -72,10 +72,7 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
           stmt.setObject(3, OffsetDateTime.parse(timestamp))
           stmt.executeUpdate()
           stmt.close()
-          Metrics.committedCount.inc()   // 1 row committed
-          val ackUs = Clock.nowMicros()
-          Metrics.e2eLatency.observe(math.max(0L, ackUs - publisherEpochUs) / 1000.0)
-          Metrics.dbWriteLatency.observe(math.max(0L, ackUs - subscriberReceiveUs) / 1000.0)
+          Metrics.recordCommit(publisherEpochUs, subscriberReceiveUs)
         } finally {
           conn.close()
         }

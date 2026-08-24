@@ -70,11 +70,29 @@ The service exposes the following Prometheus metrics on port `8081` (raw endpoin
 
 - `subscriber_requests_total`: Total count of MQTT messages **ingested** — incremented on receive, before the row reaches the database.
 - `subscriber_committed_total`: Total rows **committed** to the database — incremented on the DB write ack (by the batch size in batching mode, by 1 otherwise). Compare against `subscriber_requests_total`: the two track each other while the DB keeps up, and diverge once the write path saturates.
-- `subscriber_request_latency_milliseconds`: Latency (processing time − sensor timestamp) with quantiles (p50, p95, p99, p999).
-- `subscriber_e2e_latency_milliseconds`: End-to-end latency (DB ack − sensor timestamp) with quantiles (p50, p95, p99, p999).
-- `subscriber_db_write_latency_milliseconds`: Latency from subscriber receive to DB write ack, with quantiles (p50, p95, p99, p999).
+- `subscriber_request_latency_milliseconds`: Latency (processing time − sensor timestamp), as a histogram.
+- `subscriber_e2e_latency_milliseconds`: End-to-end latency (DB ack − sensor timestamp), as a histogram.
+- `subscriber_db_write_latency_milliseconds`: Latency from subscriber receive to DB write ack, as a histogram.
 - `subscriber_sensor_up{device="<name>"}`: Per-sensor liveness gauge — `1` = ALIVE, `0` = MISSING. Updated every heartbeat.
 - **JVM Metrics**: Standard metrics for garbage collection, memory usage, and thread counts.
+
+All three latency metrics are Prometheus **histograms** over one bucket list (39 finite bounds from
+0.05 ms to 60 s) that is byte-identical to the other repo's, so both arms bucket the same
+observations the same way and quantiles are comparable by construction. Quantiles are computed at
+query time with `histogram_quantile()`, which means any quantile can be recomputed over any window
+after the fact — that is what lets the benchmark harness report steady state separately from the
+startup transient.
+
+> **Reading the quantiles.** `histogram_quantile()` interpolates linearly inside a bucket, so a
+> quantile is accurate to at most the width of the bucket it falls in — bounded, known in advance,
+> and bounded in *milliseconds*. A quantile falling in the `+Inf` bucket returns the highest finite
+> bound, so a saturated scenario reads as clamped at 60,000 ms. Both are covered by the `_sum` /
+> `_count` pair, which gives an exact mean that is neither quantized nor clamped; the benchmark
+> report carries it as a column beside every quantile for exactly this reason.
+
+`Metrics.recordCommit` / `recordCommitBatch` are the only places a row is counted as committed and
+its latencies observed against the DB ack clock. Each backend used to hand-roll that with its own
+ack stamp, so one that drifted produced a run that looked healthy and was silently non-comparable.
 
 ## ⚙️ Configuration
 
