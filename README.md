@@ -176,10 +176,6 @@ The no-batch-vs-batch comparison is the `Batching` group: `timescale_batching_of
 |-------|-------|-------------|
 | `timescaledb` (default) | `TimescaleDBBackend` | PostgreSQL/TimescaleDB via HikariCP + JDBC |
 
-### TODO / Planned
-
-- **Resource limits** — neither `docker-compose.yaml` sets `cpus` or `mem_limit`, and the JVM/BEAM size their heaps, GC and scheduler counts from host properties. Both runtimes are therefore sized by whatever machine ran the sweep.
-
 ## 🧠 Deep Dive: Pekko Executors
 
 ### Fork-Join vs. Virtual Threads
