@@ -2,7 +2,6 @@ package com.subscriber
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
-import java.time.OffsetDateTime
 import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.pekko.actor.{ActorSystem, Props, PoisonPill}
@@ -39,9 +38,6 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
   private val dataSource: Option[HikariDataSource] =
     if (!batchEnabled) Some(mkPool(poolSize)) else None
 
-  // Status inserts always go through a small dedicated pool (low volume).
-  private val statusPool: HikariDataSource = mkPool(2)
-
   // --- Batching: pool of DbWriterActors ---
   private val writers = if (batchEnabled) {
     (0 until poolSize).map { _ =>
@@ -51,15 +47,18 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
     }.toVector
   } else Vector.empty
 
+  // Status and data share one counter, mirroring the single next_index() the Erlang dispatcher uses
+  // for both, so neither arm gives status writes a routing path of their own.
   private val counter = new AtomicInteger(0)
 
+  private def nextWriter(): Int = math.abs(counter.getAndIncrement() % poolSize)
+
   // Routes to DbWriterActor (batch) or executes inline via HikariCP (non-batch); records latency after DB ack
-  def insertData(deviceName: String, value: Int, timestamp: String,
+  def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {
     if (batchEnabled) {
-      val idx = math.abs(counter.getAndIncrement() % poolSize)
-      writers(idx) ! InsertRow(deviceName, value, timestamp, publisherEpochUs, subscriberReceiveUs)
+      writers(nextWriter()) ! InsertRow(deviceName, value, publisherEpochUs, subscriberReceiveUs)
       Future.successful(())
     } else {
       Future {
@@ -69,7 +68,7 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
             "INSERT INTO Data (DeviceName, Value, Timestamp) VALUES (?, ?, ?)")
           stmt.setString(1, deviceName)
           stmt.setInt(2, value)
-          stmt.setObject(3, OffsetDateTime.parse(timestamp))
+          stmt.setObject(3, Clock.toOffsetDateTime(publisherEpochUs))
           stmt.executeUpdate()
           stmt.close()
           Metrics.recordCommit(publisherEpochUs, subscriberReceiveUs)
@@ -80,26 +79,31 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
     }
   }
 
-  // Writes a sensor liveness status row using the dedicated small status pool
+  // Routed over the same connections as data rather than a pool of its own, so DB_POOL_SIZE is the
+  // total connection count here as it already is in Erlang, where insert_status shares the worker pool.
   def insertStatus(deviceName: String, status: String)(
-      implicit ec: ExecutionContext): Future[Unit] = Future {
-    val conn = statusPool.getConnection
-    try {
-      val stmt = conn.prepareStatement(
-        "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)")
-      stmt.setString(1, deviceName)
-      stmt.setString(2, status)
-      stmt.executeUpdate()
-      stmt.close()
-    } finally {
-      conn.close()
+      implicit ec: ExecutionContext): Future[Unit] = {
+    if (batchEnabled) {
+      writers(nextWriter()) ! InsertStatus(deviceName, status)
+      Future.successful(())
+    } else Future {
+      val conn = dataSource.get.getConnection
+      try {
+        val stmt = conn.prepareStatement(
+          "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)")
+        stmt.setString(1, deviceName)
+        stmt.setString(2, status)
+        stmt.executeUpdate()
+        stmt.close()
+      } finally {
+        conn.close()
+      }
     }
   }
 
-  // Gracefully stops all DbWriterActors (letting them drain) and closes both HikariCP pools
+  // Gracefully stops all DbWriterActors (letting them drain) and closes the HikariCP pool
   def close(): Unit = {
     writers.foreach(_ ! PoisonPill)
     dataSource.foreach(_.close())
-    statusPool.close()
   }
 }

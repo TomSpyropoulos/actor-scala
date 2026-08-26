@@ -5,9 +5,9 @@ import scala.concurrent.{ExecutionContext, Future}
 // Shared write interface for pluggable DB backends; the same instance is used by all TopicActors concurrently
 trait DatabaseBackend {
 
-  // publisherEpochUs and subscriberReceiveUs are forwarded so the backend can record e2e and db_write
-  // latency at flush time; microseconds throughout, see Clock
-  def insertData(deviceName: String, value: Int, timestamp: String,
+  // publisherEpochUs is both the Timestamp column value (via Clock.toOffsetDateTime) and the e2e
+  // start, so the reading's instant crosses here once; subscriberReceiveUs only times the db write.
+  def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit]
 

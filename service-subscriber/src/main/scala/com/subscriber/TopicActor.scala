@@ -47,7 +47,7 @@ class TopicActor(topic: String, db: DatabaseBackend) extends Actor with ActorLog
               lastSeen = receivedAt.getEpochSecond
 
               // Backend owns e2e and db_write latency recording.
-              db.insertData(name, v, ts, publisherEpochUs, subscriberReceiveUs)
+              db.insertData(name, v, publisherEpochUs, subscriberReceiveUs)
                 .failed.foreach { err =>
                   log.error(s"Failed to insert data for topic $topic: ${err.getMessage}")
                 }
