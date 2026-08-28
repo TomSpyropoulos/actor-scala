@@ -158,7 +158,7 @@ The no-batch-vs-batch comparison is the `Batching` group: `timescale_batching_of
 |----------|---------|-------------|
 | `PUBLISHER_COUNT` | `1` | Number of publisher containers (`--scale publisher=N`) |
 | `DB_BACKEND` | `timescaledb` | Backend implementation to use |
-| `DB_POOL_SIZE` | `20` | Total PostgreSQL connections: HikariCP pool size in non-batch mode, `DbWriterActor` count in batch mode. Status writes share these connections rather than a pool of their own, so the count matches the Erlang arm at every value |
+| `DB_POOL_SIZE` | `20` | Total PostgreSQL connections: HikariCP pool size in non-batch mode, `BatchWriterActor` count in batch mode. Status writes share these connections rather than a pool of their own, so the count matches the Erlang arm at every value |
 | `BATCH_ENABLED` | `false` | Enable row buffering |
 | `BATCH_SIZE` | `100` | Flush when buffer reaches this many rows |
 | `BATCH_TIMEOUT_MS` | `1000` | Flush after this many ms even if buffer is not full |
