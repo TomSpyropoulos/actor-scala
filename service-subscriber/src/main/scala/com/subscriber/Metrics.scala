@@ -19,6 +19,12 @@ object Metrics {
     .help("Total rows committed to the database.")
     .register()
 
+  // Read queries completed against the database, driven by ReaderActor rather than by ingest traffic
+  val readCount: Counter = Counter.build()
+    .name("subscriber_reads_total")
+    .help("Total read queries completed against the database.")
+    .register()
+
   // Latency histogram bounds in milliseconds, shared verbatim with the Erlang arm's
   // service_subscriber_metrics.erl. Changing them in one repo silently destroys cross-arm latency
   // comparability; changing them at all invalidates comparison against previously collected sweeps.
@@ -46,6 +52,22 @@ object Metrics {
     .help("Latency from subscriber receive to DB write ack, in milliseconds.")
     .buckets(LatencyBuckets*)
     .register()
+
+  // Same bucket bounds as the write-path histograms: the read stage is reported through the same
+  // pooled-quantile machinery, so it has to share the bounds to be sliceable the same way.
+  val readLatency: Histogram = Histogram.build()
+    .name("subscriber_read_latency_milliseconds")
+    .help("Latency of read queries in milliseconds.")
+    .buckets(LatencyBuckets*)
+    .register()
+
+  // Records one completed read. Takes an already-measured duration rather than stamping a clock
+  // here: the reader times the call with the monotonic clock, which Clock deliberately is not.
+  // Failed reads never reach this, mirroring how a failed batch is never counted as committed.
+  def recordRead(latencyUs: Long): Unit = {
+    readCount.inc()
+    readLatency.observe(latencyUs / 1000.0)
+  }
 
   // Records one committed row: stamps the DB ack, counts it, observes both latencies. Backends used
   // to hand-roll this and each stamped its own ack time, so one that drifted produced a run that

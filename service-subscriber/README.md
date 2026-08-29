@@ -34,6 +34,19 @@ flowchart TD
     L --> K
 ```
 
+Read-load path (only when `READS_PER_SEC > 0`) — an independent branch: nothing in the ingest
+flow routes to it, and it runs whether or not any sensor is publishing:
+
+```mermaid
+flowchart TD
+    A["Main\nReaderPool built only when READS_PER_SEC > 0"] --> B["ReaderActor (1..READ_POOL_SIZE)\nblocking-io-dispatcher, own connection each"]
+    B --> C["TimescaleReadTarget.read\npre-prepared SELECT, executeQuery + drain"]
+    C --> D[(TimescaleDB)]
+    D --> E["Metrics.recordRead\nreads_total + read latency; failures logged, not counted"]
+    E --> F["startSingleTimer(nextDueNs - now)\ndeadline advances one period per cycle"]
+    F --> B
+```
+
 Heartbeat path (every 5 seconds via `system.scheduler`):
 
 ```mermaid
@@ -62,6 +75,8 @@ The application is built around the **Pekko** ecosystem:
   - **Non-batch mode** (`BATCH_ENABLED=false`): creates a HikariCP pool of `DB_POOL_SIZE` connections (default 20) with `prepareThreshold=1`, so statements are server-side prepared from their first execution rather than pgjdbc's default fifth. Each `insertData` call acquires a connection, executes the statement, releases it, then records e2e and db_write latency inline. Writes run on `blocking-io-dispatcher`.
   - **Batch mode** (`BATCH_ENABLED=true`): creates one `BatchWriterPool` of `DB_POOL_SIZE` `BatchWriterActor` instances, supplying a `TimescaleBatchTarget` factory. `insertData` routes an `InsertRow` to a round-robin selected actor and returns `Future.successful(())` immediately. Latency is recorded per message at flush time inside the actor.
   - **Status writes**: `insertStatus` shares the data path's connections in both modes — the HikariCP pool in non-batch mode, a round-robin `BatchWriterActor` (via the same counter as data) in batch mode. `DB_POOL_SIZE` is therefore the total PostgreSQL connection count, matching the Erlang arm, where `insert_status` likewise routes over the shared worker pool. A dedicated status pool would add two connections the Erlang side does not have, which distorts the pool sweep most at its smallest value.
+- **Reader (`ReaderActor`, `ReaderPool`, `ReadConfig`, `ReadTarget`)**: The **artificial read load**, in `Reader.scala`, structured as a mirror of the batching layer. `ReaderPool` creates `READ_POOL_SIZE` `ReaderActor` instances (default 4) on `blocking-io-dispatcher`, each building its own `ReadTarget` in its constructor so the JDBC connection opens on that actor's own thread. There is **no round-robin counter**, unlike `BatchWriterPool`: readers pace themselves rather than serving traffic from the ingest path. `ReadConfig` is the only reader of `READS_PER_SEC` and `READ_POOL_SIZE`. After each read returns, `ReaderActor` arms a single-fire timer against a **deadline** (`nextDueNs`) that advances by exactly one period (`1000 × READ_POOL_SIZE ÷ READS_PER_SEC`) per cycle, clamped so it is never left in the past. Sleeping period-minus-query-time instead left every cycle carrying ≈20ms of timer/dispatch overhead here against ≈1ms in the Erlang arm, so the two arms ran measurably different read loads at the same `READS_PER_SEC`; pacing to a deadline absorbs a constant lateness entirely. Arming from the completion rather than with `startTimerAtFixedRate` means at most one query per actor is ever in flight, so a slow database can never grow the mailbox — when the target is unreachable the achieved rate simply falls below it, which is why `subscriber_reads_total` and not the configured value is the figure to report. The read is timed with the monotonic clock (`System.nanoTime`), not `Clock`, since it is a duration rather than a wire timestamp. Mirrors `service_subscriber_reader.erl` — keep the pacing formula in sync.
+- **TimescaleDB read target (`TimescaleReadTarget`)**: The JDBC half of a reader — one connection with `prepareThreshold=1` and one pre-prepared statement, so the read is planned once rather than on every execution; without that the group would be measuring the query planner. The query is fixed text with no parameters and no device filter, byte-identical to `?READ_SQL` in `db_read_backend_timescaledb.erl`. `read()` executes it and drains the single aggregate row: the values are discarded, but the `ResultSet` is consumed and closed so the measured time covers the whole round-trip and no cursor is left open.
 - **Batch writer (`BatchWriterActor`, `BatchWriterPool`, `BatchConfig`, `BatchTarget`)**: The backend-agnostic batching layer, in `BatchWriter.scala`. `BatchWriterActor` owns one row buffer and one `BatchTarget`, and runs on `blocking-io-dispatcher`. When it receives an `InsertRow` it appends to the buffer and starts a single-fire timer if the buffer was previously empty; the buffer is flushed when it reaches `batchSize` rows or the `BATCH_TIMEOUT_MS` timer fires. `InsertStatus` is executed immediately rather than buffered. After a successful flush the actor — not the target — records e2e and db_write latency for every row in the batch via `Metrics.recordCommitBatch`, so no backend can omit that call or stamp the ack at a different point. On `postStop` any remaining buffered rows are flushed and the target is closed. `BatchWriterPool` creates `DB_POOL_SIZE` of these actors and owns the round-robin counter shared by data and status writes. This mirrors the buffering in `service_subscriber_db.erl`, which likewise sits above the backend — keep the flush triggers in sync.
 - **TimescaleBatchTarget**: The JDBC half a `BatchWriterActor` plugs into: one `DriverManager` connection with `prepareThreshold=1`, and the two statements it executes. A flushed buffer is written as a single `INSERT ... SELECT unnest(?::text[]), unnest(?::int4[]), unnest(?::timestamptz[])` — three array parameters, so the SQL text is fixed and the statement is prepared once at construction and reused at any batch size. This mirrors the pre-parsed unnest statement in `db_backend_timescaledb.erl`; a `VALUES` list would instead rebuild and re-prepare a different statement on every flush, making the batching factors measure the JDBC driver rather than the runtime.
 
@@ -74,10 +89,12 @@ The service exposes the following Prometheus metrics on port `8081` (raw endpoin
 - `subscriber_request_latency_milliseconds`: Latency (processing time − sensor timestamp), as a histogram.
 - `subscriber_e2e_latency_milliseconds`: End-to-end latency (DB ack − sensor timestamp), as a histogram.
 - `subscriber_db_write_latency_milliseconds`: Latency from subscriber receive to DB write ack, as a histogram.
+- `subscriber_reads_total`: Total read queries **completed** against the database. Driven by the subscriber's own readers rather than by ingest traffic, so it stays at `0` unless `READS_PER_SEC` is set. Failed reads are logged and left uncounted, so the rate cannot hold steady while queries are erroring out.
+- `subscriber_read_latency_milliseconds`: Latency of one read query, as a histogram.
 - `subscriber_sensor_up{device="<name>"}`: Per-sensor liveness gauge — `1` = ALIVE, `0` = MISSING. Updated every heartbeat.
 - **JVM Metrics**: Standard metrics for garbage collection, memory usage, and thread counts.
 
-All three latency metrics are Prometheus **histograms** over one bucket list (39 finite bounds from
+All four latency metrics are Prometheus **histograms** over one bucket list (39 finite bounds from
 0.05 ms to 60 s) that is byte-identical to the other repo's, so both arms bucket the same
 observations the same way and quantiles are comparable by construction. Quantiles are computed at
 query time with `histogram_quantile()`, which means any quantile can be recomputed over any window
@@ -110,6 +127,10 @@ The service uses the following environment variables:
 - `BATCH_SIZE`: Flush when the buffer reaches this many rows (default: `100`)
 - `BATCH_TIMEOUT_MS`: Flush after this many ms even if the buffer is not full (default: `1000`)
 - `DB_POOL_SIZE`: HikariCP pool size in non-batch mode; number of `BatchWriterActor` instances in batch mode (default: `20`)
+
+**Read load (`ReaderPool`):**
+- `READS_PER_SEC`: Aggregate target read rate across all readers; `0` starts no readers at all (default: `0`)
+- `READ_POOL_SIZE`: Reader actors, each holding one PostgreSQL connection, so total connections are `DB_POOL_SIZE + READ_POOL_SIZE` while reads are on (default: `4`)
 
 ## 🔍 Missing Sensor Detection
 

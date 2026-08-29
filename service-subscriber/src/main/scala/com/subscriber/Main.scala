@@ -14,7 +14,7 @@ import scala.concurrent.duration.DurationInt
 import scala.util.{Failure, Success}
 import scala.util.control.NonFatal
 
-// Entry point: wires Pekko, MQTT stream, per-topic actor registry, heartbeat scheduler, and shutdown hook
+// Entry point: wires Pekko, MQTT stream, per-topic actor registry, read load, heartbeat scheduler, and shutdown hook
 object Main {
   // Initialise metrics, connect to MQTT, and run until the JVM exits
   def main(args: Array[String]): Unit = {
@@ -26,6 +26,15 @@ object Main {
     try {
       // system is implicit so Database.backend passes it to the backend constructor.
       val db = Database.backend
+
+      // Artificial read load: an independent branch of the system, not part of the ingest path.
+      // Nothing routes to it and it holds no per-topic state, so it starts before the MQTT stream and
+      // runs whether or not any sensor is publishing. None when READS_PER_SEC is 0, which is what
+      // makes "no reads" mean no actors and no connections rather than idle readers.
+      val readers: Option[ReaderPool] =
+        if (ReadConfig.enabled)
+          Some(new ReaderPool(ReadConfig.periodMs, ReadConfig.readers, Database.readTarget))
+        else None
 
       val mqttConnectionSettings = MqttConnectionSettings(
         "tcp://mosquitto:1883",
@@ -71,6 +80,7 @@ object Main {
 
       sys.addShutdownHook {
         Metrics.stop()
+        readers.foreach(_.close())
         db.close()
         system.terminate()
         Await.result(system.whenTerminated, 5.seconds)
