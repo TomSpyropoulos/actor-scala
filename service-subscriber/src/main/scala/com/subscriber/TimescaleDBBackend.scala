@@ -11,9 +11,11 @@ import scala.concurrent.{ExecutionContext, Future}
 // batching delegates to the shared BatchWriterPool, supplying only a TimescaleBatchTarget
 class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
-  private val dbUrl  = sys.env.getOrElse("DB_URL",      "jdbc:postgresql://timescaledb:5432/epu")
-  private val dbUser = sys.env.getOrElse("DB_USER",     "postgres")
-  private val dbPass = sys.env.getOrElse("DB_PASSWORD", "postgres")
+  // Read through DbConfig rather than the environment directly, so this backend and the read target
+  // it shares a database with can never be configured apart.
+  private val dbUrl  = DbConfig.url
+  private val dbUser = DbConfig.user
+  private val dbPass = DbConfig.password
 
   // prepareThreshold is the knob pgjdbc actually reads: Hikari's cachePrepStmts family is a MySQL
   // convention that pgjdbc ignores entirely. 1 means server-side prepared from the first execution,
