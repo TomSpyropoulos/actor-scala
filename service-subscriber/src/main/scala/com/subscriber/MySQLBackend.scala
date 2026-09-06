@@ -13,12 +13,10 @@ import scala.concurrent.{ExecutionContext, Future}
 object MySQLBackend {
   val Driver = "mysql"
 
-  // connectionTimeZone=UTC is load-bearing, not tidiness: MySQL DATETIME stores no offset, so
-  // Connector/J would otherwise shift every bound timestamp by the JVM's zone. That would leave the
-  // latency metrics correct, since those are computed in the subscriber from the epoch value and
-  // never read back, while silently breaking the read group -- its bounded window would match no
-  // rows. allowPublicKeyRetrieval/useSSL cover MySQL 8's caching_sha2_password over the plaintext
-  // in-compose link.
+  // connectionTimeZone=UTC is load-bearing: MySQL DATETIME stores no offset, so Connector/J would
+  // otherwise shift every bound timestamp by the JVM's zone. That breaks the read group silently and
+  // leaves the latency metrics looking correct, which is why the MySQL smoke-test appendix checks the
+  // read window. allowPublicKeyRetrieval/useSSL cover caching_sha2_password over the in-compose link.
   val UrlParams = "?connectionTimeZone=UTC&allowPublicKeyRetrieval=true&useSSL=false"
 }
 
@@ -32,9 +30,8 @@ class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
   private val dbUser = DbConfig.user
   private val dbPass = DbConfig.password
 
-  // useServerPrepStmts/cachePrepStmts are what Connector/J actually reads; they are the MySQL
-  // counterpart of the prepareThreshold pgjdbc takes in TimescaleDBBackend, and mean the same
-  // thing -- prepared server-side and kept, rather than re-parsed per execution.
+  // useServerPrepStmts/cachePrepStmts are Connector/J's counterpart of the prepareThreshold pgjdbc
+  // takes in TimescaleDBBackend: prepared server-side and kept, not re-parsed per execution.
   private def mkPool(size: Int): HikariDataSource = {
     val config = new HikariConfig()
     config.setJdbcUrl(dbUrl)
@@ -51,9 +48,8 @@ class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
     if (!BatchConfig.enabled) Some(mkPool(BatchConfig.writers)) else None
 
   // --- Batching: shared writer pool, backed by this backend's JDBC target ---
-  // BatchConfig.size is handed to the target as well as to the pool: the target needs it to build
-  // its full-size multi-row statement, since a VALUES list has a fixed arity where an array
-  // parameter does not.
+  // BatchConfig.size goes to the target as well as the pool: a VALUES list has fixed arity, so the
+  // target needs the size to build its full-size statement.
   private val writers: Option[BatchWriterPool] =
     if (BatchConfig.enabled)
       Some(new BatchWriterPool(BatchConfig.size, BatchConfig.timeoutMs, BatchConfig.writers,
@@ -79,9 +75,8 @@ class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
             stmt.setInt(2, value)
             stmt.setObject(3, Clock.toLocalDateTimeUtc(publisherEpochUs))
             stmt.executeUpdate()
-            // Recorded here, on the same line of the same path as TimescaleDBBackend does it: Metrics
-            // owns what a commit means, but the call site is per-backend on this side, so a backend
-            // that skipped it would produce a run that looked healthy and was silently non-comparable.
+            // Metrics owns what a commit means, but the call site is per-backend on this side, so a
+            // backend that skipped this would look healthy and be silently non-comparable.
             Metrics.recordCommit(publisherEpochUs, subscriberReceiveUs)
           } finally {
             // Closed here, not after executeUpdate: a throw there would otherwise return the

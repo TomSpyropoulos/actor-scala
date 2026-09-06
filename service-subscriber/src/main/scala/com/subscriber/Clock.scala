@@ -19,9 +19,8 @@ object Clock {
       ZoneOffset.UTC)
 
   // The zoneless form, for a column type that stores no offset (MySQL DATETIME(6)). Bound as UTC to
-  // match what toOffsetDateTime writes to timestamptz, so a reading lands at the same instant in
-  // either database and the read group's bounded window means the same thing in both. Both
-  // conversions live here rather than in a backend so no backend can pick a different zone.
+  // match what toOffsetDateTime writes to timestamptz. Both conversions live here so no backend can
+  // pick a different zone.
   def toLocalDateTimeUtc(micros: Long): LocalDateTime =
     toOffsetDateTime(micros).toLocalDateTime
 }

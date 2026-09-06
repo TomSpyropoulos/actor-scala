@@ -11,26 +11,21 @@ class TimescaleReadTarget(dbUrl: String, dbUser: String, dbPass: String) extends
     val props = new Properties()
     props.setProperty("user",     dbUser)
     props.setProperty("password", dbPass)
-    // Server-side prepare from the first execution instead of pgjdbc's default fifth, so the read is
-    // planned once rather than on every execution -- without it the group would be measuring the
-    // query planner. Matches TimescaleBatchTarget, and the Erlang arm, which parses at init.
+    // Server-side prepare from the first execution instead of pgjdbc's default fifth, so the group
+    // does not measure the query planner. Matches TimescaleBatchTarget and the Erlang arm.
     props.setProperty("prepareThreshold", "1")
     DriverManager.getConnection(dbUrl, props)
   }
 
-  // The query the whole read group is built on. Fixed text and no parameters: an aggregate over a
-  // bounded recent window, so the rows it scans stay roughly constant as the table grows and read
-  // latency does not drift upward with elapsed run time the way an unbounded scan would. No device
-  // filter, so the reader needs no knowledge of which topics exist. Byte-identical to ?READ_SQL in
-  // db_read_backend_timescaledb.erl -- if the two arms ever issue different SQL the group compares
-  // query plans instead of runtimes, so keep them in sync. The rule is per backend: MySQLReadTarget
-  // and db_read_backend_mysql.erl must match each other, not this pair.
+  // The read group's query; see the read-group section of audit.md for why the window is bounded and
+  // carries no device filter. Byte-identical to ?READ_SQL in db_read_backend_timescaledb.erl, or the
+  // group compares query plans instead of runtimes. The rule is per backend: MySQLReadTarget and
+  // db_read_backend_mysql.erl must match each other, not this pair.
   private val readStmt: PreparedStatement = conn.prepareStatement(
     "SELECT avg(Value), count(*) FROM Data WHERE Timestamp > now() - interval '5 seconds'")
 
-  // Runs the read and drains its single aggregate row. The values are discarded -- this is load, not
-  // a query whose answer anyone reads -- but the ResultSet is still consumed and closed, so the
-  // measured time covers the whole round-trip and no cursor is left open on the connection.
+  // Runs the read and drains its single aggregate row. The values are discarded, but the ResultSet is
+  // still consumed and closed, so the measured time covers the whole round-trip.
   def read(): Unit = {
     val rs: ResultSet = readStmt.executeQuery()
     try while (rs.next()) ()

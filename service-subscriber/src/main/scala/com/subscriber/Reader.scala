@@ -8,21 +8,19 @@ case object Read
 // The read-load factors as the benchmark sweeps them, read once here rather than per backend, so a
 // second backend cannot reinterpret what READS_PER_SEC means
 object ReadConfig {
-  // Aggregate target across every reader, not per reader. Keeping the knob aggregate is what leaves
-  // READ_POOL_SIZE a pure concurrency/connection setting: changing it redistributes the same total
-  // read load instead of scaling it. 0 means no readers at all -- no actors, no connections, no
-  // timers -- rather than idle readers that would still occupy connections.
+  // Aggregate across every reader, not per reader, which is what leaves READ_POOL_SIZE a pure
+  // concurrency setting. 0 means no readers at all -- no actors, no connections, no timers.
   val readsPerSec: Int = sys.env.getOrElse("READS_PER_SEC", "0").toInt
 
-  // Reader actors, each holding one PostgreSQL connection, so DB_POOL_SIZE + READ_POOL_SIZE is the
-  // total connection count while reads are on. Deliberately independent of PUBLISHER_COUNT so the
-  // read group's connection count cannot drift if the benchmark anchor's publisher count changes.
+  // One connection each, so DB_POOL_SIZE + READ_POOL_SIZE is the total while reads are on.
+  // Deliberately independent of PUBLISHER_COUNT so the group's connection count cannot drift if the
+  // anchor's publisher count changes.
   val readers: Int = sys.env.getOrElse("READ_POOL_SIZE", "4").toInt
 
   val enabled: Boolean = readsPerSec > 0
 
-  // Each reader's share of the aggregate rate, as a period. Only meaningful when enabled, which is
-  // the only place it is read. Mirrors the formula in service_subscriber_reader.erl -- keep in sync.
+  // Each reader's share of the aggregate rate, as a period. Only read when enabled.
+  // Mirrors the formula in service_subscriber_reader.erl.
   def periodMs: Long = math.round(1000.0 * readers / readsPerSec)
 }
 
@@ -51,28 +49,20 @@ class ReaderActor(periodMs: Long, mkTarget: () => ReadTarget)
   private var nextDueNs: Long = System.nanoTime()
   self ! Read
 
-  // Runs one read, records it, and arms the next against a fixed deadline.
+  // Runs one read, records it, and arms the next against a fixed deadline that advances by exactly
+  // one period per cycle. Sleeping period-minus-query-time instead let per-cycle overhead outside the
+  // measured read accumulate, and it differed enough between the arms to make them run different read
+  // loads at the same READS_PER_SEC; audit.md's read-group section has the measurements. Mirrors the
+  // pacing in service_subscriber_reader.erl.
   //
-  // The deadline advances by exactly one period per cycle, and the timer is set to whatever is left
-  // until it. Sleeping period-minus-query-time instead would leave every cycle carrying whatever the
-  // runtime spends outside the measured read -- timer granularity, dispatch, GC -- which measured as
-  // a constant ~20ms per cycle here against ~1ms in the Erlang arm. That is a per-arm constant, so
-  // the two arms would have run measurably different read loads at the same READS_PER_SEC. Pacing to
-  // a deadline absorbs a constant lateness completely: the next deadline is already set, so a late
-  // firing simply shortens the next sleep.
-  //
-  // The deadline is never left in the past (the max below), so a reader that cannot keep up degrades
-  // to running flat out rather than accumulating a debt it would later burn off in a burst. Combined
-  // with arming only from a completed read, at most one read is ever in flight per actor: a
-  // startTimerAtFixedRate would instead keep enqueueing reads a slow database cannot serve, growing
-  // the mailbox without bound while the knob silently stopped describing the read rate. When the
-  // target is genuinely unreachable the achieved rate simply falls below it -- which is why reports
-  // must read subscriber_reads_total and never the configured value.
+  // math.max keeps the deadline out of the past, so a reader that cannot keep up runs flat out
+  // instead of burning off a debt in a burst. With the next read armed only from a completed one, at
+  // most one is ever in flight, and an unreachable target shows up as an achieved rate below the
+  // configured one -- which is why reports must read subscriber_reads_total and never the env var.
   override def receive: Receive = {
     case Read =>
       // A duration, not a wire timestamp, so this reads the monotonic clock rather than
-      // Clock.nowMicros() -- mirroring the Erlang reader's erlang:monotonic_time/0. Clock exists for
-      // stamps that cross the wire and must stay comparable with the publisher's.
+      // Clock.nowMicros(); Clock is for stamps that cross the wire.
       val startNs = System.nanoTime()
       val ok =
         try { target.read(); true }

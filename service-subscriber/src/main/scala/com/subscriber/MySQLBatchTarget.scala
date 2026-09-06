@@ -12,21 +12,17 @@ class MySQLBatchTarget(dbUrl: String, dbUser: String, dbPass: String, batchSize:
     val props = new Properties()
     props.setProperty("user",     dbUser)
     props.setProperty("password", dbPass)
-    // Connector/J's equivalent of pgjdbc's prepareThreshold=1: prepare server-side and keep the
-    // handle, so the batch statement is parsed once like the Erlang arm's, which mysql:prepare/3
-    // parses at init.
+    // Connector/J's equivalent of pgjdbc's prepareThreshold=1, so the batch statement is parsed once
+    // like the Erlang arm's.
     props.setProperty("useServerPrepStmts", "true")
     props.setProperty("cachePrepStmts",     "true")
     DriverManager.getConnection(dbUrl, props)
   }
 
-  // MySQL has no unnest, so a batch is a multi-row VALUES list. The full-size statement is built
-  // once here rather than per flush, which is what keeps the common path parsed-once the way the
-  // TimescaleDB arrays are. Mirrors db_backend_mysql.erl -- keep the two in sync.
-  //
-  // Deliberately not addBatch/executeBatch with rewriteBatchedStatements: that is a JDBC-only trick
-  // with no mysql-otp analogue, so the two arms would issue structurally different writes. Multi-row
-  // VALUES is available to both.
+  // MySQL has no unnest, so a batch is a multi-row VALUES list, built full-size once here so the
+  // common path is parsed once the way the TimescaleDB arrays are. Mirrors db_backend_mysql.erl.
+  // Deliberately not addBatch/rewriteBatchedStatements: a JDBC-only trick with no mysql-otp
+  // analogue would leave the two arms issuing structurally different writes.
   private def batchSql(rows: Int): String =
     "INSERT INTO Data (DeviceName, Value, Timestamp) VALUES " +
       Seq.fill(rows)("(?, ?, ?)").mkString(", ")
@@ -38,10 +34,9 @@ class MySQLBatchTarget(dbUrl: String, dbUser: String, dbPass: String, batchSize:
   private val statusStmt: PreparedStatement = conn.prepareStatement(
     "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)")
 
-  // Binds each row to its own three placeholders. A timeout flush can hand over fewer rows than
-  // batchSize, and a multi-row VALUES list has a fixed arity, so a short buffer gets a statement
-  // built for its own length -- the only path that pays a parse, and only when the batch did not
-  // fill before BATCH_TIMEOUT_MS.
+  // Binds each row to its own three placeholders. A short buffer from a timeout flush gets a
+  // statement built for its own length, since a VALUES list has fixed arity; that is the only path
+  // that pays a parse.
   def writeBatch(rows: Seq[InsertRow]): Unit = {
     val stmt =
       if (rows.size == batchSize) fullBatchStmt
@@ -51,8 +46,7 @@ class MySQLBatchTarget(dbUrl: String, dbUser: String, dbPass: String, batchSize:
         val base = i * 3
         stmt.setString(base + 1, r.deviceName)
         stmt.setInt(base + 2, r.value)
-        // The reading's own instant, rebuilt from the epoch value the row carries -- the raw payload
-        // string is not forwarded, so this is the only conversion on the write path.
+        // Rebuilt from the epoch value the row carries; the raw payload string is not forwarded.
         stmt.setObject(base + 3, Clock.toLocalDateTimeUtc(r.publisherEpochUs))
       }
       stmt.executeUpdate()
