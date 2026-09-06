@@ -11,7 +11,7 @@ The **Service Subscriber** is a Scala-based application responsible for ingestin
    Instead of processing all messages in a single bottleneck process, the Subscriber utilizes the Actor Model. For every unique sensor topic it discovers, it spawns a dedicated **TopicActor**. This actor manages the state (cumulative sum) and processing for that specific sensor.
 
 3. **Data Transformation & Storage:**
-   The Subscriber parses incoming JSON payloads using [Circe](https://circe.github.io/circe/) and extracts the relevant information. It then persists this data into **TimescaleDB** via the pluggable `DatabaseBackend`. Depending on `BATCH_ENABLED`, writes go through a HikariCP connection pool (non-batch) or a `BatchWriterPool` of `BatchWriterActor` instances (batch). Latency recording happens down in the write path — in the backend's `Future` when not batching, in `BatchWriterActor` at flush time when batching — not in `TopicActor`.
+   The Subscriber parses incoming JSON payloads using [Circe](https://circe.github.io/circe/) and extracts the relevant information. It then persists this data into the database selected by `DB_BACKEND` via the pluggable `DatabaseBackend`. Depending on `BATCH_ENABLED`, writes go through a HikariCP connection pool (non-batch) or a `BatchWriterPool` of `BatchWriterActor` instances (batch). Latency recording happens down in the write path — in the backend's `Future` when not batching, in `BatchWriterActor` at flush time when batching — not in `TopicActor`.
 
 4. **Metrics and Observability:**
    The service exposes a metrics endpoint for [Prometheus](https://prometheus.io/) to scrape, providing visibility into the pipeline's performance.
@@ -25,12 +25,12 @@ flowchart TD
     C --> D[TopicActor.receive MqttMessage]
     D --> E["Circe JSON decode\nPrometheus: requests_total (ingest) + subscriber latency"]
     E --> F["db.insertData\npublisherEpochUs, subscriberReceiveUs"]
-    F --> G[TimescaleDBBackend.insertData]
+    F --> G["<active DatabaseBackend>.insertData"]
     G --> H{BATCH_ENABLED}
     H -->|false| I["HikariCP: acquire connection\nJDBC prepareStatement + execute\nRecord committed_total (+1) + e2e + db_write inline"]
     H -->|true| J["BatchWriterPool.route\nround-robin select BatchWriterActor\nFuture.successful immediately"]
-    I --> K[(TimescaleDB)]
-    J --> L["BatchWriterActor buffers row\nflush on batchSize or timeout\nTimescaleBatchTarget: pre-prepared unnest INSERT (3 array params)\nRecord committed_total (+batch size) + latency per row at flush"]
+    I --> K[(selected database)]
+    J --> L["BatchWriterActor buffers row\nflush on batchSize or timeout\n<active BatchTarget> writes it as one statement\nRecord committed_total (+batch size) + latency per row at flush"]
     L --> K
 ```
 
@@ -40,8 +40,8 @@ flow routes to it, and it runs whether or not any sensor is publishing:
 ```mermaid
 flowchart TD
     A["Main\nReaderPool built only when READS_PER_SEC > 0"] --> B["ReaderActor (1..READ_POOL_SIZE)\nblocking-io-dispatcher, own connection each"]
-    B --> C["TimescaleReadTarget.read\npre-prepared SELECT, executeQuery + drain"]
-    C --> D[(TimescaleDB)]
+    B --> C["<active ReadTarget>.read\npre-prepared SELECT, executeQuery + drain"]
+    C --> D[(selected database)]
     D --> E["Metrics.recordRead\nreads_total + read latency; failures logged, not counted"]
     E --> F["startSingleTimer(nextDueNs - now)\ndeadline advances one period per cycle"]
     F --> B
@@ -70,8 +70,8 @@ The application is built around the **Pekko** ecosystem:
 - **Topic Actors (`TopicActor`)**: Dynamically spawned actors that handle state management and processing per sensor topic. They receive the `DatabaseBackend` instance via constructor injection, so the backend can be swapped without modifying the actor. `TopicActor` records the ingest count and subscriber-receive latency; **the committed-rows count and the e2e/db_write latency recording are delegated to the write path below it** so they are stamped at the DB ack in both batch and non-batch modes.
 - **Actor Registry**: A `TrieMap[String, ActorRef]` in `Main` maps topic strings to their actor. `getOrElseUpdate` is used for lock-free creation on first sight of a new topic.
 - **DB Backend Trait (`DatabaseBackend`)**: A trait defining the pluggable interface for database writes — `insertData`, `insertStatus`, and `close`. `insertData` takes `publisherEpochUs` and `subscriberReceiveUs` (microseconds, matching the publisher's stamp precision). `publisherEpochUs` is both the value written to the `Timestamp` column — via `Clock.toOffsetDateTime` in whichever backend binds it — and the start of the e2e measurement, so the reading's instant crosses the interface once, in one representation. E2e and db_write latency are recorded at the DB ack rather than at the call — by the backend at `Future` completion in non-batch mode, and by `BatchWriterActor` at flush time in batch mode. All implementations must be thread-safe, as the single instance is shared across all `TopicActor` instances running concurrently. The active backend is selected at JVM startup by the `Database` object via the `DB_BACKEND` environment variable.
-- **DB Backend Selector (`Database`)**: An object with a `def backend(implicit system: ActorSystem)` that reads `DB_BACKEND` (default: `"timescaledb"`) and instantiates the matching backend. The `ActorSystem` implicit is required by backends that create child actors. The instance is passed to every `TopicActor` at construction time.
-- **TimescaleDB Backend (`TimescaleDBBackend`)**: The concrete implementation of `DatabaseBackend` for TimescaleDB. Takes an implicit `ActorSystem`. Its connection comes from `DbConfig` (in `Database.scala`), the single reader of `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` — the same five keys the Erlang arm's backends read, which is what lets one compose fragment configure both repos. The JDBC URL is assembled from them rather than supplied whole, and `DbConfig` is shared with the read target so the two can never point at different databases; the batching factors come from `BatchConfig`, which reads `BATCH_ENABLED`, `BATCH_SIZE`, `BATCH_TIMEOUT_MS` and `DB_POOL_SIZE` once for every backend.
+- **DB Backend Selector (`Database`)**: An object with a `def backend(implicit system: ActorSystem)` that reads `DB_BACKEND` (default: `"timescaledb"`, also accepting `"mysql"`) and instantiates the matching backend. `def readTarget` resolves the read side from the same variable and fails the same way, so a backend name is either supported for both paths or for neither. The `ActorSystem` implicit is required by backends that create child actors. The instance is passed to every `TopicActor` at construction time.
+- **TimescaleDB Backend (`TimescaleDBBackend`)**: The concrete implementation of `DatabaseBackend` for TimescaleDB. Takes an implicit `ActorSystem`. Its connection comes from `DbConfig` (in `Database.scala`), the single reader of `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` — the same five keys the Erlang arm's backends read, which is what lets one compose fragment configure both repos. The JDBC URL is assembled from them by `DbConfig.urlFor(driver, params)` rather than supplied whole — the scheme and connection options belong to the backend, since they are properties of its driver — and `DbConfig` is shared with the read target so the two can never point at different databases; the batching factors come from `BatchConfig`, which reads `BATCH_ENABLED`, `BATCH_SIZE`, `BATCH_TIMEOUT_MS` and `DB_POOL_SIZE` once for every backend.
   - **Non-batch mode** (`BATCH_ENABLED=false`): creates a HikariCP pool of `DB_POOL_SIZE` connections (default 20) with `prepareThreshold=1`, so statements are server-side prepared from their first execution rather than pgjdbc's default fifth. Each `insertData` call acquires a connection, executes the statement, releases it, then records e2e and db_write latency inline. Writes run on `blocking-io-dispatcher`.
   - **Batch mode** (`BATCH_ENABLED=true`): creates one `BatchWriterPool` of `DB_POOL_SIZE` `BatchWriterActor` instances, supplying a `TimescaleBatchTarget` factory. `insertData` routes an `InsertRow` to a round-robin selected actor and returns `Future.successful(())` immediately. Latency is recorded per message at flush time inside the actor.
   - **Status writes**: `insertStatus` shares the data path's connections in both modes — the HikariCP pool in non-batch mode, a round-robin `BatchWriterActor` (via the same counter as data) in batch mode. `DB_POOL_SIZE` is therefore the total PostgreSQL connection count, matching the Erlang arm, where `insert_status` likewise routes over the shared worker pool. A dedicated status pool would add two connections the Erlang side does not have, which distorts the pool sweep most at its smallest value.
@@ -79,6 +79,9 @@ The application is built around the **Pekko** ecosystem:
 - **TimescaleDB read target (`TimescaleReadTarget`)**: The JDBC half of a reader — one connection with `prepareThreshold=1` and one pre-prepared statement, so the read is planned once rather than on every execution; without that the group would be measuring the query planner. The query is fixed text with no parameters and no device filter, byte-identical to `?READ_SQL` in `db_read_backend_timescaledb.erl`. `read()` executes it and drains the single aggregate row: the values are discarded, but the `ResultSet` is consumed and closed so the measured time covers the whole round-trip and no cursor is left open.
 - **Batch writer (`BatchWriterActor`, `BatchWriterPool`, `BatchConfig`, `BatchTarget`)**: The backend-agnostic batching layer, in `BatchWriter.scala`. `BatchWriterActor` owns one row buffer and one `BatchTarget`, and runs on `blocking-io-dispatcher`. When it receives an `InsertRow` it appends to the buffer and starts a single-fire timer if the buffer was previously empty; the buffer is flushed when it reaches `batchSize` rows or the `BATCH_TIMEOUT_MS` timer fires. `InsertStatus` is executed immediately rather than buffered. After a successful flush the actor — not the target — records e2e and db_write latency for every row in the batch via `Metrics.recordCommitBatch`, so no backend can omit that call or stamp the ack at a different point. On `postStop` any remaining buffered rows are flushed and the target is closed. `BatchWriterPool` creates `DB_POOL_SIZE` of these actors and owns the round-robin counter shared by data and status writes. This mirrors the buffering in `service_subscriber_db.erl`, which likewise sits above the backend — keep the flush triggers in sync.
 - **TimescaleBatchTarget**: The JDBC half a `BatchWriterActor` plugs into: one `DriverManager` connection with `prepareThreshold=1`, and the two statements it executes. A flushed buffer is written as a single `INSERT ... SELECT unnest(?::text[]), unnest(?::int4[]), unnest(?::timestamptz[])` — three array parameters, so the SQL text is fixed and the statement is prepared once at construction and reused at any batch size. This mirrors the pre-parsed unnest statement in `db_backend_timescaledb.erl`; a `VALUES` list would instead rebuild and re-prepare a different statement on every flush, making the batching factors measure the JDBC driver rather than the runtime.
+- **MySQL Backend (`MySQLBackend`)**: The concrete `DatabaseBackend` for MySQL 8.4 via Connector/J. Structurally the same as `TimescaleDBBackend` — HikariCP pool when not batching, `BatchWriterPool` fed a `MySQLBatchTarget` when batching — and it reads the same `DbConfig` and `BatchConfig`. Two things differ: the pool sets `useServerPrepStmts`/`cachePrepStmts`, which is what Connector/J actually reads where pgjdbc reads `prepareThreshold`; and its URL carries `connectionTimeZone=UTC`, which is load-bearing rather than tidiness — MySQL `DATETIME` stores no offset, so without it Connector/J shifts every bound timestamp by the JVM's zone. That would leave the latency metrics correct, since those are computed from the epoch value and never read back, while silently emptying the read group's bounded window.
+- **MySQL batch target (`MySQLBatchTarget`)**: The JDBC half of a MySQL `BatchWriterActor`. MySQL has no `unnest`, so a flushed buffer is written as a multi-row `INSERT ... VALUES (?,?,?),(?,?,?),...` built for exactly `BATCH_SIZE` rows and prepared once at construction; a timeout flush on a partly filled buffer gets a statement built for its own length, the only path that pays a parse. Deliberately **not** `addBatch`/`executeBatch` with `rewriteBatchedStatements`: that is a JDBC-only trick with no mysql-otp analogue, so the two arms would issue structurally different writes. Multi-row `VALUES` is available to both, which is the property that matters.
+- **MySQL read target (`MySQLReadTarget`)**: One connection and one pre-prepared statement, mirroring `TimescaleReadTarget`. The query uses `NOW(6)` rather than `NOW()` to match the microsecond resolution of Postgres `now()`, and is byte-identical to `?READ_SQL` in `db_read_backend_mysql.erl`. The matching rule is **per backend**: this pair must match each other, not the TimescaleDB pair.
 
 ## 📊 Metrics Tracking
 
@@ -117,12 +120,16 @@ ack stamp, so one that drifted produced a run that looked healthy and was silent
 The service uses the following environment variables:
 
 **Database connectivity:**
-- `DB_BACKEND`: Backend implementation (default: `timescaledb`)
-- `DB_HOST`: Database host (default: `timescaledb`)
-- `DB_PORT`: Database port (default: `5432`)
+- `DB_BACKEND`: Backend implementation, `timescaledb` (default) or `mysql`
+- `DB_HOST`: Database host (default: `timescaledb`; `mysql` under `DB_BACKEND=mysql`)
+- `DB_PORT`: Database port (default: `5432`; `3306` under `DB_BACKEND=mysql`)
 - `DB_NAME`: Database name (default: `epu`)
-- `DB_USER`: Database user (default: `postgres`)
-- `DB_PASSWORD`: Database password (default: `postgres`)
+- `DB_USER`: Database user (default: `postgres`; `root` under `DB_BACKEND=mysql`)
+- `DB_PASSWORD`: Database password (default: `postgres`; `mysql` under `DB_BACKEND=mysql`)
+
+All five are supplied by the selected backend's compose fragment. The JDBC scheme is **not** among
+them: `DbConfig.urlFor(driver, params)` assembles the URL and each backend passes its own scheme and
+connection options, so the five keys stay identical to the ones the Erlang arm reads.
 
 **Write mode (`TimescaleDBBackend`):**
 - `BATCH_ENABLED`: Enable row buffering / batch inserts (default: `false`)

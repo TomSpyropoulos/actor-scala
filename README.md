@@ -187,10 +187,10 @@ The no-batch-vs-batch comparison is the `Batching` group: `batching_off.env` ver
 |----------|---------|-------------|
 | `PUBLISHER_COUNT` | `1` | Number of publisher containers (`--scale publisher=N`) |
 | `DB_BACKEND` | `timescaledb` | Which database to run against. Set on the command line, **not** in a scenario file; selects the `docker-compose.<backend>.yaml` fragment |
-| `DB_HOST` | `timescaledb` | Database host. Supplied by the backend's compose fragment; identical key in both arms |
-| `DB_PORT` | `5432` | Database port. Supplied by the backend's compose fragment; identical key in both arms |
+| `DB_HOST` | `timescaledb` | Database host (`mysql` under `DB_BACKEND=mysql`). Supplied by the backend's compose fragment; identical key in both arms |
+| `DB_PORT` | `5432` | Database port (`3306` under `DB_BACKEND=mysql`). Supplied by the backend's compose fragment; identical key in both arms |
 | `DB_NAME` | `epu` | Database name. Supplied by the backend's compose fragment; identical key in both arms |
-| `DB_USER` / `DB_PASSWORD` | `postgres` | Database credentials. Supplied by the backend's compose fragment |
+| `DB_USER` / `DB_PASSWORD` | `postgres` | Database credentials (`root` / `mysql` under `DB_BACKEND=mysql`). Supplied by the backend's compose fragment |
 | `DB_POOL_SIZE` | `20` | Total PostgreSQL connections: HikariCP pool size in non-batch mode, `BatchWriterActor` count in batch mode. Status writes share these connections rather than a pool of their own, so the count matches the Erlang arm at every value |
 | `BATCH_ENABLED` | `false` | Enable row buffering |
 | `BATCH_SIZE` | `100` | Flush when buffer reaches this many rows |
@@ -207,13 +207,22 @@ The no-batch-vs-batch comparison is the `Batching` group: `batching_off.env` ver
 
 ### Supported `DB_BACKEND` values
 
-| Value | Class | Description |
-|-------|-------|-------------|
-| `timescaledb` (default) | `TimescaleDBBackend` | PostgreSQL/TimescaleDB via HikariCP + JDBC |
+| Value | Classes | Description |
+|-------|---------|-------------|
+| `timescaledb` (default) | `TimescaleDBBackend`, `TimescaleReadTarget` | PostgreSQL/TimescaleDB via HikariCP + JDBC |
+| `mysql` | `MySQLBackend`, `MySQLReadTarget` | MySQL 8.4 via Connector/J + HikariCP. Batches are a multi-row `VALUES` list rather than the array parameters TimescaleDB takes |
 
-Adding a backend is three things in this repo: the module, its one-line registration, and a
+Each value needs its own `<backend>/init/init.sql`: the schema is written in that database's own
+dialect, so the two are equivalent rather than identical.
+
+Adding a backend is three things in this repo: the classes, their one-line registrations, and a
 `docker-compose.<backend>.yaml` fragment carrying that database's service, volume and connection
 variables. Nothing in `benchmarking/` changes — the scenario files are backend-agnostic.
+
+> **MySQL cannot pipeline.** One connection carries one query at a time, so in-flight writes are
+> capped at `DB_POOL_SIZE`. With `BATCH_ENABLED=false` that cap is binding at the swept load and the
+> subscriber builds an unbounded backlog; with batching on it keeps up comfortably. See finding G in
+> `../audit.md` — `pool_*` and `batching_*` results are not comparable across the two databases.
 
 ## 🧠 Deep Dive: Pekko Executors
 

@@ -14,6 +14,11 @@ libraryDependencies ++= Seq(
   "io.circe" %% "circe-parser" % "0.14.6",
   "io.circe" %% "circe-generic" % "0.14.6",
   "org.postgresql" % "postgresql" % "42.7.2",
+  // protobuf-java is excluded because Connector/J needs it only for the X DevAPI (the document
+  // store), which this service never touches -- it speaks the classic JDBC protocol. Left in, its
+  // google/protobuf/*.proto files collide with pekko-protobuf-v3's during assembly and fail the
+  // build on a deduplicate error.
+  ("com.mysql" % "mysql-connector-j" % "9.1.0").exclude("com.google.protobuf", "protobuf-java"),
   "com.zaxxer" % "HikariCP" % "5.1.0",
   "io.prometheus" % "simpleclient" % "0.16.0",
   "io.prometheus" % "simpleclient_httpserver" % "0.16.0",

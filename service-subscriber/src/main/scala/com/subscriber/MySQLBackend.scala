@@ -7,31 +7,41 @@ import org.apache.pekko.actor.ActorSystem
 
 import scala.concurrent.{ExecutionContext, Future}
 
-// The JDBC scheme this backend's driver answers to. Named here rather than in DbConfig because the
-// scheme belongs to the driver, and read by Database.readTarget so both paths build the same URL.
-object TimescaleDBBackend {
-  val Driver = "postgresql"
+// The JDBC scheme and connection options this backend's driver needs. Named here rather than in
+// DbConfig because both belong to the driver, and read by Database.readTarget so the read and write
+// paths build the same URL.
+object MySQLBackend {
+  val Driver = "mysql"
+
+  // connectionTimeZone=UTC is load-bearing, not tidiness: MySQL DATETIME stores no offset, so
+  // Connector/J would otherwise shift every bound timestamp by the JVM's zone. That would leave the
+  // latency metrics correct, since those are computed in the subscriber from the epoch value and
+  // never read back, while silently breaking the read group -- its bounded window would match no
+  // rows. allowPublicKeyRetrieval/useSSL cover MySQL 8's caching_sha2_password over the plaintext
+  // in-compose link.
+  val UrlParams = "?connectionTimeZone=UTC&allowPublicKeyRetrieval=true&useSSL=false"
 }
 
-// Concrete DatabaseBackend for TimescaleDB: non-batching uses HikariCP with per-Future latency recording;
-// batching delegates to the shared BatchWriterPool, supplying only a TimescaleBatchTarget
-class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
+// Concrete DatabaseBackend for MySQL: non-batching uses HikariCP with per-Future latency recording;
+// batching delegates to the shared BatchWriterPool, supplying only a MySQLBatchTarget
+class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   // Read through DbConfig rather than the environment directly, so this backend and the read target
   // it shares a database with can never be configured apart.
-  private val dbUrl  = DbConfig.urlFor(TimescaleDBBackend.Driver)
+  private val dbUrl  = DbConfig.urlFor(MySQLBackend.Driver, MySQLBackend.UrlParams)
   private val dbUser = DbConfig.user
   private val dbPass = DbConfig.password
 
-  // prepareThreshold is the knob pgjdbc actually reads: Hikari's cachePrepStmts family is a MySQL
-  // convention that pgjdbc ignores entirely. 1 means server-side prepared from the first execution,
-  // matching TimescaleBatchTarget and epgsql's parse-at-init.
+  // useServerPrepStmts/cachePrepStmts are what Connector/J actually reads; they are the MySQL
+  // counterpart of the prepareThreshold pgjdbc takes in TimescaleDBBackend, and mean the same
+  // thing -- prepared server-side and kept, rather than re-parsed per execution.
   private def mkPool(size: Int): HikariDataSource = {
     val config = new HikariConfig()
     config.setJdbcUrl(dbUrl)
     config.setUsername(dbUser)
     config.setPassword(dbPass)
-    config.addDataSourceProperty("prepareThreshold", "1")
+    config.addDataSourceProperty("useServerPrepStmts", "true")
+    config.addDataSourceProperty("cachePrepStmts",     "true")
     config.setMaximumPoolSize(size)
     new HikariDataSource(config)
   }
@@ -41,10 +51,13 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
     if (!BatchConfig.enabled) Some(mkPool(BatchConfig.writers)) else None
 
   // --- Batching: shared writer pool, backed by this backend's JDBC target ---
+  // BatchConfig.size is handed to the target as well as to the pool: the target needs it to build
+  // its full-size multi-row statement, since a VALUES list has a fixed arity where an array
+  // parameter does not.
   private val writers: Option[BatchWriterPool] =
     if (BatchConfig.enabled)
       Some(new BatchWriterPool(BatchConfig.size, BatchConfig.timeoutMs, BatchConfig.writers,
-                               () => new TimescaleBatchTarget(dbUrl, dbUser, dbPass)))
+                               () => new MySQLBatchTarget(dbUrl, dbUser, dbPass, BatchConfig.size)))
     else None
 
   // Routes to the writer pool (batch) or executes inline via HikariCP (non-batch); records latency after DB ack
@@ -64,8 +77,11 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
               "INSERT INTO Data (DeviceName, Value, Timestamp) VALUES (?, ?, ?)")
             stmt.setString(1, deviceName)
             stmt.setInt(2, value)
-            stmt.setObject(3, Clock.toOffsetDateTime(publisherEpochUs))
+            stmt.setObject(3, Clock.toLocalDateTimeUtc(publisherEpochUs))
             stmt.executeUpdate()
+            // Recorded here, on the same line of the same path as TimescaleDBBackend does it: Metrics
+            // owns what a commit means, but the call site is per-backend on this side, so a backend
+            // that skipped it would produce a run that looked healthy and was silently non-comparable.
             Metrics.recordCommit(publisherEpochUs, subscriberReceiveUs)
           } finally {
             // Closed here, not after executeUpdate: a throw there would otherwise return the
