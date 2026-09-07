@@ -23,13 +23,14 @@ object DbConfig {
 
 // Reads DB_BACKEND env var and returns the matching write backend and read target; called from Main
 object Database {
-  private val Supported = "timescaledb, mysql"
+  private val Supported = "timescaledb, mysql, influxdb"
 
   // Fails fast on an unrecognised backend name so misconfiguration is caught at startup
   def backend(implicit system: ActorSystem): DatabaseBackend =
     sys.env.getOrElse("DB_BACKEND", "timescaledb") match {
       case "timescaledb" => new TimescaleDBBackend()
       case "mysql"       => new MySQLBackend()
+      case "influxdb"    => new InfluxDBBackend()
       case unknown =>
         throw new IllegalArgumentException(
           s"Unknown DB_BACKEND: '$unknown'. Supported: $Supported")
@@ -37,8 +38,8 @@ object Database {
 
   // A factory rather than an instance: every ReaderActor builds its own target so the connection is
   // opened on that actor's own dispatcher thread. Resolved from the same DB_BACKEND as the write
-  // backend and failing the same way, and built with the same urlFor call, so the read and write
-  // paths cannot end up on different databases or different connection options.
+  // backend and failing the same way, and built from the same place that backend builds from, so
+  // the read and write paths cannot end up on different databases or different connection options.
   def readTarget: () => ReadTarget =
     sys.env.getOrElse("DB_BACKEND", "timescaledb") match {
       case "timescaledb" =>
@@ -50,6 +51,8 @@ object Database {
           new MySQLReadTarget(
             DbConfig.urlFor(MySQLBackend.Driver, MySQLBackend.UrlParams),
             DbConfig.user, DbConfig.password)
+      case "influxdb" =>
+        () => new InfluxReadTarget()
       case unknown =>
         throw new IllegalArgumentException(
           s"Unknown DB_BACKEND: '$unknown'. Supported: $Supported")
