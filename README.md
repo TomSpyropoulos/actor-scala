@@ -262,3 +262,7 @@ The current implementation uses the **Fork-Join Executor**. To experiment with V
 - **Observability**: Prometheus & Grafana
 - **Database**: Pluggable backends — TimescaleDB (default), MySQL, InfluxDB
 - **Deployment**: Docker & Docker Compose
+
+## 📄 License
+
+MIT — see [`LICENSE`](LICENSE).
