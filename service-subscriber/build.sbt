@@ -20,6 +20,7 @@ libraryDependencies ++= Seq(
   // build on a deduplicate error.
   ("com.mysql" % "mysql-connector-j" % "9.1.0").exclude("com.google.protobuf", "protobuf-java"),
   "com.zaxxer" % "HikariCP" % "5.1.0",
+  "org.xerial" % "sqlite-jdbc" % "3.53.4.0",
   "io.prometheus" % "simpleclient" % "0.16.0",
   "io.prometheus" % "simpleclient_httpserver" % "0.16.0",
   "io.prometheus" % "simpleclient_hotspot" % "0.16.0"

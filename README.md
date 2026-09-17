@@ -11,7 +11,7 @@ The system consists of the following components:
 3.  **[Service Subscriber](service-subscriber/)**: A Scala application that consumes messages from the `sensors/#` wildcard topic. It dynamically creates a dedicated Pekko Actor for each unique sensor topic to maintain state (running sum and last timestamp). DB writes are handled through a pluggable `DatabaseBackend` trait, with the active implementation selected at runtime via `DB_BACKEND`.
 4.  **Prometheus**: Scrapes metrics from the containers, the host system, and the **Service Subscriber**.
 5.  **Grafana**: Provides a visual dashboard for monitoring container resource usage and application-specific metrics.
-6.  **The database**: selected by `DB_BACKEND` — TimescaleDB (default), MySQL or InfluxDB.
+6.  **The database**: selected by `DB_BACKEND` — TimescaleDB (default), MySQL, InfluxDB or SQLite. SQLite is a library, so it runs inside the subscriber rather than in a container of its own.
 
 ## 🚀 Getting Started
 
@@ -192,7 +192,8 @@ The no-batch-vs-batch comparison is the `Batching` group: `batching_off.env` ver
 | `DB_NAME` | `epu` | Database name, and the bucket name under `DB_BACKEND=influxdb`. Supplied by the backend's compose fragment; identical key in both arms |
 | `DB_USER` / `DB_PASSWORD` | `postgres` | Database credentials (`root` / `mysql` under MySQL). Supplied by the backend's compose fragment. Under `DB_BACKEND=influxdb` these seed the initial user only — the API authenticates with `DB_TOKEN` — and InfluxDB enforces an 8-character minimum password |
 | `DB_ORG` / `DB_TOKEN` | `epu` / `epu-benchmark-token` | InfluxDB only: the organisation and API token. The two keys beyond the five every backend reads; supplied by the compose fragment and read identically in both arms |
-| `DB_POOL_SIZE` | `20` | Total database connections: HikariCP pool size in non-batch mode, `BatchWriterActor` count in batch mode. Status writes share these connections rather than a pool of their own, so the count matches the Erlang arm at every value. Under `DB_BACKEND=influxdb` it caps concurrent HTTP requests instead, so the connection count is only an upper bound |
+| `DB_PATH` / `DB_INIT_DIR` | `/var/lib/sqlite/epu.db` / `/sqlite/init` | SQLite only: the database file, on the `sqlite-storage` volume, and the mounted directory holding `init.sql` and `connection.sql`. The five network keys above go unused. Supplied by the compose fragment and read identically in both arms |
+| `DB_POOL_SIZE` | `20` | Total database connections: HikariCP pool size in non-batch mode, `BatchWriterActor` count in batch mode. Status writes share these connections rather than a pool of their own, so the count matches the Erlang arm at every value. Under `DB_BACKEND=influxdb` it caps concurrent HTTP requests instead, so the connection count is only an upper bound. Under `DB_BACKEND=sqlite` it is the number of connections queuing on one write lock |
 | `BATCH_ENABLED` | `false` | Enable row buffering |
 | `BATCH_SIZE` | `100` | Flush when buffer reaches this many rows |
 | `BATCH_TIMEOUT_MS` | `1000` | Flush after this many ms even if buffer is not full |
@@ -213,16 +214,20 @@ The no-batch-vs-batch comparison is the `Batching` group: `batching_off.env` ver
 | `timescaledb` (default) | `TimescaleDBBackend`, `TimescaleReadTarget` | PostgreSQL/TimescaleDB via HikariCP + JDBC |
 | `mysql` | `MySQLBackend`, `MySQLReadTarget` | MySQL 8.4 via Connector/J + HikariCP. Batches are a multi-row `VALUES` list rather than the array parameters TimescaleDB takes |
 | `influxdb` | `InfluxDBBackend`, `InfluxReadTarget` | InfluxDB 2.7 over its HTTP API via the JDK's `java.net.http`, no driver dependency. Batches are newline-joined line protocol rather than a SQL statement, and reads are Flux rather than SQL |
+| `sqlite` | `SQLiteBackend`, `SQLiteReadTarget` | SQLite embedded through sqlite-jdbc, so there is no database container. A batch is one transaction of single-row inserts, and every write holds one fair process-wide write lock |
 
 Each SQL value needs its own `<backend>/init/init.sql`, written in that database's own dialect, so
 the schemas are equivalent rather than identical. `influxdb` has none: it is schema-on-write, the
 image creates the bucket, and what the columns are is decided by the backend's line-protocol
 builders. So no file pins the schema across the two arms, and a missing `precision=us` on the write
-URL fails silently by landing every point in 1970.
+URL fails silently by landing every point in 1970. `sqlite` has no server to run a schema, so
+`sqlite/init/` holds `init.sql` plus a `connection.sql` for the settings SQLite keeps per connection,
+and the subscriber applies both every time it opens a connection.
 
 Adding a backend is three things in this repo: the classes, their one-line registrations, and a
 `docker-compose.<backend>.yaml` fragment carrying that database's service, volume and connection
-variables, plus a schema if that database needs one. Nothing in `benchmarking/` changes — the
+variables (for SQLite, only a volume and two variables on the subscriber), plus a schema if that
+database needs one. Nothing in `benchmarking/` changes — the
 scenario files are backend-agnostic.
 
 > **MySQL cannot pipeline.** One connection carries one query at a time, so in-flight writes are
@@ -232,10 +237,18 @@ scenario files are backend-agnostic.
 
 > **InfluxDB is HTTP, which changes three things.** `DB_POOL_SIZE` caps concurrent requests rather
 > than counting connections; a write is an upsert keyed by timestamp rather than an append; and one
-> Flux read costs far more than its SQL equivalent, so the `reads_*` ladder is already at its ceiling
-> by `reads_0050`. HTTP also connects lazily, so both backends probe for readiness at startup rather
+> Flux read costs far more than its SQL equivalent, so the `reads_*` scenarios are already at their
+> ceiling by `reads_0050`. HTTP also connects lazily, so both backends probe for readiness at startup rather
 > than let a rep ingest while committing nothing. This backend's `pool_*`, `batching_*` and `reads_*`
 > numbers are not comparable with the SQL ones.
+
+> **SQLite runs inside the subscriber, which changes what most groups measure.** It allows one
+> writer for the whole database, so every write takes an in-process lock first, and `pool_*` measures
+> how many writers queue on that lock rather than how many write at once. The JVM would not deadlock
+> without the lock, but the Erlang arm would, and both take it so they wait the same way. Every commit
+> fsyncs, so `batching_off` builds a backlog, and `batchsize_020` and the higher-load `load_*` scenarios are
+> expected to as well. No read crosses a network, the subscriber's CPU and memory include the
+> database, and there is no database container to start.
 
 ## 🧠 Deep Dive: Pekko Executors
 
@@ -262,7 +275,7 @@ The current implementation uses the **Fork-Join Executor**. To experiment with V
 - **Messaging**: MQTT (Mosquitto / via Alpakka, Pekko Connectors)
 - **JSON**: Circe
 - **Observability**: Prometheus & Grafana
-- **Database**: Pluggable backends — TimescaleDB (default), MySQL, InfluxDB
+- **Database**: Pluggable backends — TimescaleDB (default), MySQL, InfluxDB, SQLite (embedded)
 - **Deployment**: Docker & Docker Compose
 
 ## 📄 License
