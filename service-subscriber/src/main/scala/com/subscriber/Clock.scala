@@ -1,6 +1,7 @@
 package com.subscriber
 
 import java.time.{Instant, LocalDateTime, OffsetDateTime, ZoneOffset}
+import java.util.Date
 
 // The one microsecond stamp definition for the subscriber; reading a latency clock as millis anywhere
 // re-quantises the measurement. Erlang gets the same from os:system_time(microsecond) directly.
@@ -23,4 +24,9 @@ object Clock {
   // pick a different zone.
   def toLocalDateTimeUtc(micros: Long): LocalDateTime =
     toOffsetDateTime(micros).toLocalDateTime
+
+  // The millisecond form, for a BSON Date. Floored the way bson-erlang floors the timestamp tuple
+  // db_backend_mongodb.erl builds, so both arms store the same instant.
+  def toDateMillis(micros: Long): Date =
+    new Date(Math.floorDiv(micros, 1000L))
 }

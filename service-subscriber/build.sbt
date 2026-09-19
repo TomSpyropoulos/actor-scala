@@ -21,6 +21,7 @@ libraryDependencies ++= Seq(
   ("com.mysql" % "mysql-connector-j" % "9.1.0").exclude("com.google.protobuf", "protobuf-java"),
   "com.zaxxer" % "HikariCP" % "5.1.0",
   "org.xerial" % "sqlite-jdbc" % "3.53.4.0",
+  "org.mongodb" % "mongodb-driver-sync" % "5.12.0",
   "io.prometheus" % "simpleclient" % "0.16.0",
   "io.prometheus" % "simpleclient_httpserver" % "0.16.0",
   "io.prometheus" % "simpleclient_hotspot" % "0.16.0"
@@ -32,6 +33,9 @@ assembly / assemblyMergeStrategy := {
   // running on the classpath as a fat JAR.
   case PathList("module-info.class") => MergeStrategy.discard
   case x if x.endsWith("/module-info.class") => MergeStrategy.discard
+  // GraalVM native-image hints. The MongoDB bson and driver-core jars each ship their own, and a JVM
+  // fat jar never reads them.
+  case PathList("META-INF", "native-image", _*) => MergeStrategy.discard
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)

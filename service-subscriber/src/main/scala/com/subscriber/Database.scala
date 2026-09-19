@@ -23,7 +23,7 @@ object DbConfig {
 
 // Reads DB_BACKEND env var and returns the matching write backend and read target; called from Main
 object Database {
-  private val Supported = "timescaledb, mysql, influxdb, sqlite"
+  private val Supported = "timescaledb, mysql, influxdb, sqlite, mongodb"
 
   // Fails fast on an unrecognised backend name so misconfiguration is caught at startup
   def backend(implicit system: ActorSystem): DatabaseBackend =
@@ -32,6 +32,7 @@ object Database {
       case "mysql"       => new MySQLBackend()
       case "influxdb"    => new InfluxDBBackend()
       case "sqlite"      => new SQLiteBackend()
+      case "mongodb"     => new MongoDBBackend()
       case unknown =>
         throw new IllegalArgumentException(
           s"Unknown DB_BACKEND: '$unknown'. Supported: $Supported")
@@ -56,6 +57,8 @@ object Database {
         () => new InfluxReadTarget()
       case "sqlite" =>
         () => new SQLiteReadTarget()
+      case "mongodb" =>
+        () => new MongoReadTarget()
       case unknown =>
         throw new IllegalArgumentException(
           s"Unknown DB_BACKEND: '$unknown'. Supported: $Supported")
