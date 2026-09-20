@@ -11,3 +11,4 @@ benchmarking/.venv/
 benchmarking/__pycache__/
 benchmarking/output/*.json
 benchmarking/output/*/*.json
+benchmarking/output/*/*/*.json
