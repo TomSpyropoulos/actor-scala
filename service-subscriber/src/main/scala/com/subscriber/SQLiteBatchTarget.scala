@@ -38,7 +38,7 @@ class SQLiteBatchTarget extends BatchTarget {
     statusStmt.executeUpdate()
   }
 
-  // Timestamp is bound as the epoch-microsecond value itself; the column stores that unit.
+  // Timestamp is bound as the epoch-microsecond value itself. The column stores that unit.
   private def bindAndRun(r: InsertRow): Unit = {
     insertStmt.setString(1, r.deviceName)
     insertStmt.setInt(2, r.value)

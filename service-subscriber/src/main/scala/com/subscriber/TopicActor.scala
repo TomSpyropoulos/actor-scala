@@ -43,7 +43,7 @@ class TopicActor(topic: String, db: DatabaseBackend) extends Actor with ActorLog
               Metrics.requestLatency.observe(latency)
 
               sum     += v
-              // Reuses receivedAt; the drift is nothing against a 1s liveness timeout
+              // Reuses receivedAt. The drift is nothing against a 1s liveness timeout
               lastSeen = receivedAt.getEpochSecond
 
               // Backend owns e2e and db_write latency recording.

@@ -12,7 +12,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 // The HTTP half this backend shares with its batch and read targets: URLs, the client, the
 // line-protocol builders and the readiness probe. Not built from DbConfig.urlFor, which assembles a
-// JDBC URL; the same five keys are read through DbConfig, plus the two InfluxDB needs
+// JDBC URL. The same five keys are read through DbConfig, plus the two InfluxDB needs
 object InfluxDBBackend {
   val org: String    = sys.env.getOrElse("DB_ORG",   "epu")
   val token: String  = sys.env.getOrElse("DB_TOKEN", "epu-benchmark-token")
@@ -21,7 +21,7 @@ object InfluxDBBackend {
   private val baseUrl: String = s"http://${DbConfig.host}:${DbConfig.port}"
 
   // precision=us is load-bearing: without it InfluxDB reads the number as nanoseconds, every point
-  // lands in 1970 and the read window is silently empty. See finding L.
+  // lands in 1970 and the read window is silently empty.
   val WriteUrl: String = s"$baseUrl/api/v2/write?org=$org&bucket=$bucket&precision=us"
   val QueryUrl: String = s"$baseUrl/api/v2/query?org=$org"
 
@@ -32,8 +32,8 @@ object InfluxDBBackend {
   // One client for the process, not one per writer: each carries a selector thread and its own
   // executor, so fifty at pool_50 would be thread and memory cost with nothing to do with the
   // database. HTTP_1_1 is pinned because the default attempts an h2c upgrade, and multiplexing
-  // would hand this arm wire concurrency inets cannot have. See finding J.
-  // Nothing closes it: HttpClient became AutoCloseable in JDK 21 and this image runs 17.
+  // would hand this arm wire concurrency the Erlang arm's inets cannot have. Nothing closes it:
+  // HttpClient became AutoCloseable in JDK 21 and this image runs 17.
   val Http: HttpClient = HttpClient.newBuilder()
     .version(HttpClient.Version.HTTP_1_1)
     .connectTimeout(Duration.ofSeconds(5))
@@ -67,7 +67,8 @@ object InfluxDBBackend {
 
   // One reading as a line-protocol point. The trailing i keeps Value an integer: field type is
   // fixed by the first write into a shard, so dropping it would silently store floats. Nothing is
-  // escaped; finding N records why that is safe here. Mirrors line/3 in db_backend_influxdb.erl.
+  // escaped, because a deviceName is "sensor" plus a container hostname and carries no comma,
+  // space or equals sign. Mirrors line/3 in db_backend_influxdb.erl.
   def dataLine(deviceName: String, value: Int, publisherEpochUs: Long): String =
     s"Data,DeviceName=$deviceName Value=${value}i $publisherEpochUs"
 
@@ -78,7 +79,7 @@ object InfluxDBBackend {
 
   // Blocks until the bucket answers, so a database that is not up fails the subscriber at startup
   // the way a JDBC connect does. HTTP connects lazily, so without this the subscriber would start,
-  // ingest happily and commit nothing -- a rep bench.sh would score as valid. See finding I.
+  // ingest happily and commit nothing, which bench.sh would score as a valid rep.
   def awaitReady(): Unit = {
     val req = HttpRequest.newBuilder(URI.create(s"$baseUrl/api/v2/buckets?name=$bucket"))
       .header("Authorization", s"Token $token").timeout(RequestTimeout).GET().build()
@@ -99,15 +100,15 @@ object InfluxDBBackend {
 }
 
 // Concrete DatabaseBackend for InfluxDB: non-batching posts one point per reading under a
-// concurrency cap; batching delegates to the shared BatchWriterPool, supplying an InfluxBatchTarget
+// concurrency cap. Batching delegates to the shared BatchWriterPool, supplying an InfluxBatchTarget
 class InfluxDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   InfluxDBBackend.awaitReady()
 
   // The other two backends cap concurrency by blocking in HikariDataSource.getConnection on
   // blocking-io-dispatcher. This is the same cap on the same threads, so application.conf's
-  // fixed-pool-size coupling still holds; a private executor would make pool_* measure a different
-  // kind of overload here than for the other two. See finding J.
+  // fixed-pool-size coupling still holds. A private executor would make pool_* measure a different
+  // kind of overload here than for the other two.
   private val inFlight = new Semaphore(BatchConfig.writers)
 
   // --- Batching: shared writer pool, backed by this backend's HTTP target ---
@@ -117,7 +118,7 @@ class InfluxDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
                                () => new InfluxBatchTarget()))
     else None
 
-  // Routes to the writer pool (batch) or posts inline under the cap (non-batch); records latency after the DB ack
+  // Routes to the writer pool (batch) or posts inline under the cap (non-batch). Records latency after the DB ack
   def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {
@@ -155,6 +156,6 @@ class InfluxDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
     }
   }
 
-  // Stops all writers, letting them drain. The shared HttpClient outlives this by design; see above.
+  // Stops all writers, letting them drain. The shared HttpClient outlives this by design. See above.
   def close(): Unit = writers.foreach(_.close())
 }

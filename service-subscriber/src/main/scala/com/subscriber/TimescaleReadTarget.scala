@@ -17,10 +17,10 @@ class TimescaleReadTarget(dbUrl: String, dbUser: String, dbPass: String) extends
     DriverManager.getConnection(dbUrl, props)
   }
 
-  // The read group's query; see the read-group section of audit.md for why the window is bounded and
-  // carries no device filter. Byte-identical to ?READ_SQL in db_read_backend_timescaledb.erl, or the
-  // group compares query plans instead of runtimes. The rule is per backend: MySQLReadTarget and
-  // db_read_backend_mysql.erl must match each other, not this pair.
+  // The read group's query: a bounded window, no device filter. Byte-identical to ?READ_SQL in
+  // db_read_backend_timescaledb.erl, or the group compares query plans instead of runtimes. The
+  // rule is per backend: MySQLReadTarget and db_read_backend_mysql.erl must match each other, not
+  // this pair.
   private val readStmt: PreparedStatement = conn.prepareStatement(
     "SELECT avg(Value), count(*) FROM Data WHERE Timestamp > now() - interval '5 seconds'")
 

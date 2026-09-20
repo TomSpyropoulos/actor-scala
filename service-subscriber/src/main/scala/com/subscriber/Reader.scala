@@ -45,24 +45,20 @@ class ReaderActor(periodMs: Long, mkTarget: () => ReadTarget)
   // blocking-io-dispatcher thread, not on whichever thread constructed the pool.
   private val target: ReadTarget = mkTarget()
 
-  // The first read fires immediately; every later one is armed against nextDueNs.
+  // The first read fires immediately. Every later one is armed against nextDueNs.
   private var nextDueNs: Long = System.nanoTime()
   self ! Read
 
   // Runs one read, records it, and arms the next against a fixed deadline that advances by exactly
-  // one period per cycle. Sleeping period-minus-query-time instead let per-cycle overhead outside the
-  // measured read accumulate, and it differed enough between the arms to make them run different read
-  // loads at the same READS_PER_SEC; audit.md's read-group section has the measurements. Mirrors the
-  // pacing in service_subscriber_reader.erl.
-  //
-  // math.max keeps the deadline out of the past, so a reader that cannot keep up runs flat out
-  // instead of burning off a debt in a burst. With the next read armed only from a completed one, at
-  // most one is ever in flight, and an unreachable target shows up as an achieved rate below the
-  // configured one -- which is why reports must read subscriber_reads_total and never the env var.
+  // one period per cycle. Sleeping period-minus-query-time instead lets per-cycle overhead outside
+  // the measured read accumulate, which makes the achieved rate depend on the runtime. math.max
+  // keeps the deadline out of the past, so a reader that cannot keep up runs flat out rather than
+  // bursting to clear a debt, and an unreachable target shows up as an achieved rate below the
+  // configured one. Mirrors the pacing in service_subscriber_reader.erl.
   override def receive: Receive = {
     case Read =>
       // A duration, not a wire timestamp, so this reads the monotonic clock rather than
-      // Clock.nowMicros(); Clock is for stamps that cross the wire.
+      // Clock.nowMicros(). Clock is for stamps that cross the wire.
       val startNs = System.nanoTime()
       val ok =
         try { target.read(); true }

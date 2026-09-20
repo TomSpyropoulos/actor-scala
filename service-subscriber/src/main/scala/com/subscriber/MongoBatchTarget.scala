@@ -24,6 +24,6 @@ class MongoBatchTarget extends BatchTarget {
     ()
   }
 
-  // Nothing to release; the shared client belongs to MongoDBBackend.
+  // Nothing to release. The shared client belongs to MongoDBBackend.
   def close(): Unit = ()
 }

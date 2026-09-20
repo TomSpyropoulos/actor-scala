@@ -25,9 +25,9 @@ object Main {
   private val IsoMicros: DateTimeFormatter =
     new DateTimeFormatterBuilder().appendInstant(6).toFormatter
 
-  // Builds a JSON sensor reading; paddingBytes > 0 appends a filler "padding" field for payload-size benchmarks.
+  // Builds a JSON sensor reading. PaddingBytes > 0 appends a filler "padding" field for payload-size benchmarks.
   // These exact bytes are the shared wire format -- byte-identical to handle_info(publish_tick, ...) in
-  // actor-erlang/service_publisher/src/service_publisher_srv.erl; keep the two in sync.
+  // actor-erlang/service_publisher/src/service_publisher_srv.erl. Keep the two in sync.
   def data(deviceName: String, paddingBytes: Int): String = {
     val timestampz = IsoMicros.format(Instant.now())
     val value = Random().nextInt(10) + 1
@@ -62,10 +62,9 @@ object Main {
     // 2. map: Transforms the signal into a JSON data payload
     // 3. map: Wraps the payload into an MqttMessage
     //
-    // Deliberately no per-message logging in this stream. A wireTap logging each payload
-    // interpolated the whole payload (padding included) once per message at 1000 msg/s, and
-    // the Erlang publisher has no equivalent -- it was a one-sided cost that made the two
-    // benchmark arms incomparable. Keep any debugging output out of the hot path.
+    // No per-message logging in this stream: a wireTap interpolated the whole payload, padding
+    // included, once per message at 1000 msg/s, and the Erlang publisher has no equivalent, so it
+    // was a one-sided cost. Keep debugging output out of the hot path.
     lazy val mqttSource =
       Source
         .repeat(())

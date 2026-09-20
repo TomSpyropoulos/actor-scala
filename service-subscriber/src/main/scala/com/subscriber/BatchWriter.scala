@@ -24,17 +24,17 @@ object BatchConfig {
 // The per-writer resources and write operations a backend supplies to BatchWriterActor. One instance
 // is owned by one actor for its lifetime, so implementations need no synchronisation of their own
 trait BatchTarget {
-  // Writes a whole flushed buffer. Throwing marks the batch uncommitted; returning normally is what
+  // Writes a whole flushed buffer. Throwing marks the batch uncommitted. Returning normally is what
   // the writer treats as the DB ack, so this must not return before the write is durable.
   def writeBatch(rows: Seq[InsertRow]): Unit
 
-  // Writes one status transition. Never buffered, so implementations should execute it immediately.
+  // Writes one status transition. Never buffered, so implementations must execute it immediately.
   def writeStatus(deviceName: String, status: String): Unit
 
   def close(): Unit
 }
 
-// Owns one row buffer and one BatchTarget; flushes on batchSize or timeout
+// Owns one row buffer and one BatchTarget. Flushes on batchSize or timeout
 // Runs on blocking-io-dispatcher so a target's synchronous I/O does not stall the default fork-join pool
 // Mirrors the buffering in service_subscriber_db.erl -- keep the flush triggers in sync
 class BatchWriterActor(batchSize: Int, timeoutMs: Long, mkTarget: () => BatchTarget)
@@ -74,7 +74,7 @@ class BatchWriterActor(batchSize: Int, timeoutMs: Long, mkTarget: () => BatchTar
 
     try {
       target.writeBatch(rows)
-      // Only after writeBatch returns — a failure skips this via catch, so a failed batch is never
+      // Only after writeBatch returns. A failure skips this via catch, so a failed batch is never
       // counted as committed.
       Metrics.recordCommitBatch(rows)(_.publisherEpochUs, _.subscriberReceiveUs)
     } catch {
@@ -104,7 +104,7 @@ class BatchWriterPool(batchSize: Int, timeoutMs: Long, writers: Int, mkTarget: (
   // for both, so neither arm gives status writes a routing path of their own.
   private val counter = new AtomicInteger(0)
 
-  // Accepts InsertRow and InsertStatus; the writer decides which is buffered and which is immediate
+  // Accepts InsertRow and InsertStatus. The writer decides which is buffered and which is immediate
   def route(msg: Any): Unit =
     actors(math.abs(counter.getAndIncrement() % writers)) ! msg
 

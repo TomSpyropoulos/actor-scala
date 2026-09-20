@@ -27,7 +27,7 @@ object Metrics {
 
   // Latency histogram bounds in milliseconds, shared verbatim with the Erlang arm's
   // service_subscriber_metrics.erl. Changing them in one repo silently destroys cross-arm latency
-  // comparability; changing them at all invalidates comparison against previously collected sweeps.
+  // comparability. Changing them at all invalidates comparison against previously collected sweeps.
   private val LatencyBuckets: Array[Double] = Array(
     0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.4,
     0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0, 75.0,
@@ -79,7 +79,7 @@ object Metrics {
   }
 
   // Batch variant: reads the ack clock once per flush rather than once per row, so every row in a
-  // batch shares one timestamp — matching how the Erlang arm stamps a batch ack.
+  // batch shares one timestamp, matching how the Erlang arm stamps a batch ack.
   def recordCommitBatch[A](rows: Seq[A])(publisherEpochUs: A => Long,
                                          subscriberReceiveUs: A => Long): Unit = {
     val ackUs = Clock.nowMicros()
@@ -93,7 +93,7 @@ object Metrics {
     dbWriteLatency.observe(math.max(0L, ackUs - subscriberReceiveUs) / 1000.0)
   }
 
-  // Sensor liveness gauge: 1 = ALIVE, 0 = MISSING; one label series per device
+  // Sensor liveness gauge: 1 = ALIVE, 0 = MISSING. One label series per device
   val sensorUp: Gauge = Gauge.build()
     .name("subscriber_sensor_up")
     .help("Sensor liveness: 1 = ALIVE, 0 = MISSING.")
@@ -102,7 +102,7 @@ object Metrics {
 
   private var server: Option[HTTPServer] = None
 
-  // Starts the Prometheus HTTP server and registers JVM default exports; idempotent
+  // Starts the Prometheus HTTP server and registers JVM default exports. Idempotent
   def init(port: Int = 8081): Unit = {
     if (server.isEmpty) {
       DefaultExports.initialize()
@@ -111,7 +111,7 @@ object Metrics {
     }
   }
 
-  // Shuts down the scrape server; called from the JVM shutdown hook before the actor system terminates
+  // Shuts down the scrape server. Called from the JVM shutdown hook before the actor system terminates
   def stop(): Unit = {
     server.foreach(_.stop())
     server = None

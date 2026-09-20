@@ -20,8 +20,8 @@ object MySQLBackend {
   val UrlParams = "?connectionTimeZone=UTC&allowPublicKeyRetrieval=true&useSSL=false"
 }
 
-// Concrete DatabaseBackend for MySQL: non-batching uses HikariCP with per-Future latency recording;
-// batching delegates to the shared BatchWriterPool, supplying only a MySQLBatchTarget
+// Concrete DatabaseBackend for MySQL: non-batching uses HikariCP with per-Future latency
+// recording, and batching delegates to the shared BatchWriterPool, supplying only a MySQLBatchTarget
 class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   // Read through DbConfig rather than the environment directly, so this backend and the read target
@@ -56,7 +56,7 @@ class MySQLBackend(implicit system: ActorSystem) extends DatabaseBackend {
                                () => new MySQLBatchTarget(dbUrl, dbUser, dbPass, BatchConfig.size)))
     else None
 
-  // Routes to the writer pool (batch) or executes inline via HikariCP (non-batch); records latency after DB ack
+  // Routes to the writer pool (batch) or executes inline via HikariCP (non-batch). Records latency after DB ack
   def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {

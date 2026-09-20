@@ -13,16 +13,16 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 // The driver half this backend shares with its batch and read targets: the two clients, the write
-// concern and the document builders. Not built from DbConfig.urlFor, which assembles a JDBC URL; the
+// concern and the document builders. Not built from DbConfig.urlFor, which assembles a JDBC URL. The
 // same five keys are read through DbConfig
 object MongoDBBackend {
-  // Journaled, so an ack means the same fsync the SQL commits mean. Mirrors ?WRITE_CONCERN in
-  // db_backend_mongodb.erl; see finding W.
+  // Journaled, so an ack means the same fsync the SQL commits mean.
+  // Mirrors ?WRITE_CONCERN in db_backend_mongodb.erl.
   val Journaled: WriteConcern = WriteConcern.W1.withJournal(true)
 
   // One client per role for the process, not one per writer: each adds a monitoring socket and
   // threads of its own. The pool opens all its connections up front, so DB_POOL_SIZE is what the
-  // server sees, plus the one POLL monitor socket; see finding X.
+  // server sees, plus the one POLL monitor socket.
   private def client(poolSize: Int): MongoClient =
     MongoClients.create(MongoClientSettings.builder()
       .applyToClusterSettings(b => { b.hosts(List(new ServerAddress(DbConfig.host, DbConfig.port.toInt)).asJava); () })
@@ -41,27 +41,27 @@ object MongoDBBackend {
   def collection(c: MongoClient, name: String): MongoCollection[Document] =
     c.getDatabase(DbConfig.name).getCollection(name)
 
-  // One reading as a document. Value stays an Int so it is stored as int32; nothing in the schema
+  // One reading as a document. Value stays an Int so it is stored as int32. Nothing in the schema
   // would catch a double. Mirrors data_doc/3 in db_backend_mongodb.erl.
   def dataDoc(deviceName: String, value: Int, publisherEpochUs: Long): Document =
     new Document("Timestamp", Clock.toDateMillis(publisherEpochUs))
       .append("DeviceName", deviceName)
       .append("Value", Int.box(value))
 
-  // reportedat is the client's clock, since MongoDB has no insert-time default; see finding V.
+  // reportedat is the client's clock, since MongoDB has no insert-time default.
   def statusDoc(deviceName: String, status: String): Document =
     new Document("DeviceName", deviceName).append("Status", status).append("reportedat", new Date())
 }
 
 // Concrete DatabaseBackend for MongoDB: non-batching inserts one document per reading on the shared
-// write client; batching delegates to the shared BatchWriterPool, supplying a MongoBatchTarget
+// write client. Batching delegates to the shared BatchWriterPool, supplying a MongoBatchTarget
 class MongoDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   private val data       = MongoDBBackend.collection(MongoDBBackend.writeClient, "Data")
   private val statusColl = MongoDBBackend.collection(MongoDBBackend.writeClient, "sensor_status")
 
   // The client connects lazily, so ping now: a database that is not up fails the subscriber at
-  // startup the way a JDBC connect does, instead of ingesting and committing nothing (finding I).
+  // startup the way a JDBC connect does, instead of ingesting and committing nothing.
   MongoDBBackend.writeClient.getDatabase(DbConfig.name).runCommand(new Document("ping", 1))
 
   // --- Batching: shared writer pool, backed by this backend's driver target ---
@@ -71,7 +71,7 @@ class MongoDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
                                () => new MongoBatchTarget()))
     else None
 
-  // Routes to the writer pool (batch) or inserts inline (non-batch); records latency after the DB ack.
+  // Routes to the writer pool (batch) or inserts inline (non-batch). Records latency after the DB ack.
   // Blocking in the pool's checkout on blocking-io-dispatcher is the cap, as HikariCP's is.
   def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
@@ -106,6 +106,6 @@ class MongoDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
     }
   }
 
-  // Stops all writers, letting them drain. The shared client outlives this by design; see above.
+  // Stops all writers, letting them drain. The shared client outlives this by design. See above.
   def close(): Unit = writers.foreach(_.close())
 }

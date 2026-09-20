@@ -13,8 +13,8 @@ object TimescaleDBBackend {
   val Driver = "postgresql"
 }
 
-// Concrete DatabaseBackend for TimescaleDB: non-batching uses HikariCP with per-Future latency recording;
-// batching delegates to the shared BatchWriterPool, supplying only a TimescaleBatchTarget
+// Concrete DatabaseBackend for TimescaleDB: non-batching uses HikariCP with per-Future latency
+// recording, and batching delegates to the shared BatchWriterPool, supplying only a TimescaleBatchTarget
 class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
   // Read through DbConfig rather than the environment directly, so this backend and the read target
@@ -47,7 +47,7 @@ class TimescaleDBBackend(implicit system: ActorSystem) extends DatabaseBackend {
                                () => new TimescaleBatchTarget(dbUrl, dbUser, dbPass)))
     else None
 
-  // Routes to the writer pool (batch) or executes inline via HikariCP (non-batch); records latency after DB ack
+  // Routes to the writer pool (batch) or executes inline via HikariCP (non-batch). Records latency after DB ack
   def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {

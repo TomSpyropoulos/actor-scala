@@ -53,15 +53,15 @@ object Main {
         )
 
       // How often every actor is pinged to re-evaluate its sensor's liveness. Coupled with
-      // LivenessTimeoutSeconds (1s) in TopicActor, which sets how long a sensor may be silent
-      // before this check flips it to MISSING — keep the two in sync when tuning sensitivity.
+      // LivenessTimeoutSeconds (1s) in TopicActor, which sets how long a sensor can be silent
+      // before this check flips it to MISSING. Keep the two in sync when tuning sensitivity.
       val heartbeatInterval = 5.seconds
 
       val actors = TrieMap.empty[String, ActorRef]
 
-      // runWith's Future is the only place a broker disconnect or a subscribe failure surfaces;
-      // discarding it would leave a live JVM consuming nothing. A normal completion is just as
-      // fatal here — this stream is meant to run for the process's whole lifetime.
+      // runWith's Future is the only place a broker disconnect or a subscribe failure surfaces,
+      // and discarding it leaves a live JVM consuming nothing. A normal completion is just as
+      // fatal here, because this stream is meant to run for the process's whole lifetime.
       mqttSource.runWith(Sink.foreach { msg =>
         val topic    = msg.topic
         val actorRef = actors.getOrElseUpdate(
@@ -94,7 +94,7 @@ object Main {
 
   // Kill the JVM rather than just the calling thread. Metrics' HTTP server and the actor system
   // both run on non-daemon threads, so an escaping exception would otherwise leave a process that
-  // still answers /metrics with every counter at zero — indistinguishable from a healthy but idle
+  // still answers /metrics with every counter at zero, which is indistinguishable from a healthy but idle
   // subscriber, and never restarted by Docker because the container's main process is still alive.
   private def fatal(context: String, e: Throwable): Nothing = {
     System.err.println(s"FATAL: $context: ${e.getMessage}")

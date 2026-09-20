@@ -4,7 +4,7 @@ import org.apache.pekko.actor.ActorSystem
 
 // The one place the database connection is read from the environment, shared by the write backend
 // and the read target. The Erlang backends read these same five keys, which is what lets one
-// docker-compose.<backend>.yaml configure both repos. The defaults are a bare fallback; compose
+// docker-compose.<backend>.yaml configure both repos. The defaults are a bare fallback. Compose
 // always supplies all five.
 object DbConfig {
   val host: String     = sys.env.getOrElse("DB_HOST",     "timescaledb")
@@ -21,7 +21,7 @@ object DbConfig {
     s"jdbc:$driver://$host:$port/$name$params"
 }
 
-// Reads DB_BACKEND env var and returns the matching write backend and read target; called from Main
+// Reads DB_BACKEND env var and returns the matching write backend and read target. Called from Main
 object Database {
   private val Supported = "timescaledb, mysql, influxdb, sqlite, mongodb"
 

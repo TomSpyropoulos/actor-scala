@@ -11,7 +11,7 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 // The connection half this backend shares with its batch and read targets: where the file is and how
-// a connection is set up. Not built from DbConfig, whose five keys describe a server; SQLite needs a
+// a connection is set up. Not built from DbConfig, whose five keys describe a server. SQLite needs a
 // path and the schema directory instead
 object SQLiteBackend {
   val path: String    = sys.env.getOrElse("DB_PATH",     "/var/lib/sqlite/epu.db")
@@ -24,7 +24,7 @@ object SQLiteBackend {
   private val SetupFiles = Seq("connection.sql", "init.sql")
 
   // Fair, so writers queue in arrival order as db_backend_sqlite_lock.erl serves them. Every write
-  // and every connection setup holds it; see finding R in audit.md.
+  // and every connection setup holds it, since SQLite allows one writer for the whole database.
   private val WriteLock = new ReentrantLock(true)
 
   // Runs write while holding the lock, releasing it even if write throws
@@ -57,7 +57,7 @@ object SQLiteBackend {
       .split(";").map(_.trim).filter(_.nonEmpty).toSeq
 }
 
-// Concrete DatabaseBackend for SQLite: non-batching borrows a writer slot per row; batching delegates
+// Concrete DatabaseBackend for SQLite: non-batching borrows a writer slot per row. Batching delegates
 // to the shared BatchWriterPool, supplying an SQLiteBatchTarget
 class SQLiteBackend(implicit system: ActorSystem) extends DatabaseBackend {
 
@@ -86,7 +86,7 @@ class SQLiteBackend(implicit system: ActorSystem) extends DatabaseBackend {
     try f(slot) finally q.put(slot)
   }
 
-  // Routes to the writer pool (batch) or writes inline on a slot (non-batch); records latency after the commit
+  // Routes to the writer pool (batch) or writes inline on a slot (non-batch). Records latency after the commit
   def insertData(deviceName: String, value: Int,
                  publisherEpochUs: Long, subscriberReceiveUs: Long)(
       implicit ec: ExecutionContext): Future[Unit] = {

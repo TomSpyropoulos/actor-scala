@@ -24,7 +24,7 @@ class TimescaleBatchTarget(dbUrl: String, dbUser: String, dbPass: String) extend
     "SELECT unnest(?::text[]), unnest(?::int4[]), unnest(?::timestamptz[])")
 
   // Status rows share this writer's single connection rather than a pool of their own, so
-  // DB_POOL_SIZE is the total connection count in both arms; see TimescaleDBBackend.
+  // DB_POOL_SIZE is the total connection count in both arms. See TimescaleDBBackend.
   private val statusStmt: PreparedStatement = conn.prepareStatement(
     "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)")
 

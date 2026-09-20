@@ -30,12 +30,12 @@ class MySQLBatchTarget(dbUrl: String, dbUser: String, dbPass: String, batchSize:
   private val fullBatchStmt: PreparedStatement = conn.prepareStatement(batchSql(batchSize))
 
   // Status rows share this writer's single connection rather than a pool of their own, so
-  // DB_POOL_SIZE is the total connection count in both arms; see MySQLBackend.
+  // DB_POOL_SIZE is the total connection count in both arms. See MySQLBackend.
   private val statusStmt: PreparedStatement = conn.prepareStatement(
     "INSERT INTO sensor_status (DeviceName, Status) VALUES (?, ?)")
 
   // Binds each row to its own three placeholders. A short buffer from a timeout flush gets a
-  // statement built for its own length, since a VALUES list has fixed arity; that is the only path
+  // statement built for its own length, since a VALUES list has fixed arity. That is the only path
   // that pays a parse.
   def writeBatch(rows: Seq[InsertRow]): Unit = {
     val stmt =
@@ -46,12 +46,12 @@ class MySQLBatchTarget(dbUrl: String, dbUser: String, dbPass: String, batchSize:
         val base = i * 3
         stmt.setString(base + 1, r.deviceName)
         stmt.setInt(base + 2, r.value)
-        // Rebuilt from the epoch value the row carries; the raw payload string is not forwarded.
+        // Rebuilt from the epoch value the row carries. The raw payload string is not forwarded.
         stmt.setObject(base + 3, Clock.toLocalDateTimeUtc(r.publisherEpochUs))
       }
       stmt.executeUpdate()
     } finally {
-      // Only the per-flush statement is closed; the full-size one is reused for the life of the
+      // Only the per-flush statement is closed. The full-size one is reused for the life of the
       // writer and closed in close().
       if (stmt ne fullBatchStmt) stmt.close()
     }

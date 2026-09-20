@@ -1,42 +1,52 @@
 # Service Publisher
 
-The **Service Publisher** is a Scala-based application designed to simulate the behavior of IoT sensors. It acts as the primary data generator for the IoT data pipeline, producing a steady stream of sensor readings and dispatching them to the central messaging hub.
+The Service Publisher is a Scala application that simulates an IoT sensor. It generates the data
+for the pipeline: a steady stream of sensor readings, published to the message broker.
 
-## ⚙️ Core Functionality
+## Core Functionality
 
-1. **Simulation of IoT Devices:** 
-   Built using [Pekko Streams](https://pekko.apache.org/docs/pekko/current/stream/index.html), it simulates real-world hardware sensors by generating unique identifiers based on the container's hostname.
+1. **Simulation of an IoT device.**
+   The service is built on
+   [Pekko Streams](https://pekko.apache.org/docs/pekko/current/stream/index.html). It derives a
+   sensor identifier from the hostname of its container and produces telemetry the way a hardware
+   sensor in the field does.
 
-2. **Data Generation:**
-   The service produces **1000 JSON payloads per second** (throttled at 1000/sec via Pekko Streams backpressure). The payload is the benchmark's **shared wire format** — byte-for-byte identical to what the Erlang arm publishes for the same reading, so `PAYLOAD_PADDING_BYTES` is added to the same base payload in both:
+2. **Data generation.**
+   The service produces 1000 JSON payloads per second, throttled to that rate by Pekko Streams
+   backpressure. The payload is the shared wire format of the benchmark. It is byte-for-byte
+   identical to what the Erlang arm publishes for the same reading. `PAYLOAD_PADDING_BYTES`
+   therefore adds its filler to the same base payload in both arms:
 
    ```json
    {"device_name":"sensor<hostname>","timestamp":"2026-08-21T12:34:56.123456Z","value":7}
    ```
 
-   - `device_name`: The unique identifier of the sensor, derived from the container hostname.
-   - `timestamp`: RFC 3339 UTC with **exactly six fractional digits**, formatted via `DateTimeFormatterBuilder().appendInstant(6)` — a fixed width, unlike `Instant.toString`, which elides trailing zeros and would vary the payload size.
-   - `value`: A random integer in 1–10, published as a **JSON number** — not a quoted string.
-   - `padding`: Present only when `PAYLOAD_PADDING_BYTES > 0`; the letter `x` repeated that many times, always the last field.
+   - `device_name`: The identifier of the sensor, derived from the container hostname.
+   - `timestamp`: RFC 3339 in UTC with exactly six fractional digits, formatted by `DateTimeFormatterBuilder().appendInstant(6)`. The width is fixed, unlike `Instant.toString`, which drops trailing zeros and changes the payload size from message to message.
+   - `value`: A random integer from 1 to 10, published as a JSON number and not as a quoted string.
+   - `padding`: Present only when `PAYLOAD_PADDING_BYTES` is above 0. It is the letter `x` repeated that many times, and it is always the last field.
 
-   The payload is compact — no whitespace after the colons or commas — and the field order is fixed; both are part of the shared format, not incidental formatting.
+   The payload is compact, with no whitespace after a colon or a comma, and the field order is
+   fixed. Both belong to the shared format and are not incidental formatting.
 
-3. **MQTT Publishing:**
-   The service connects to the **Mosquitto MQTT Broker** (defaulting to `tcp://mosquitto:1883`) and publishes messages to a device-specific topic (e.g., `sensors/sensor<hostname>`).
+3. **MQTT publishing.**
+   The service connects to the Mosquitto MQTT broker, `tcp://mosquitto:1883` by default. It
+   publishes each message to a topic of its own device, such as `sensors/sensor<hostname>`.
 
-## 🏗️ Architecture
+## Architecture
 
-The Publisher utilizes **Pekko Streams** and **Pekko Connectors MQTT (Alpakka)**:
-- **Pekko Actor System**: Provides the underlying runtime for managing concurrency.
-- **Pekko Streams**: Manages the flow of data from generation to publishing, ensuring backpressure and efficient resource usage.
-- **Logging**: Uses Pekko Logging with **Logback** for consistent observability.
+The publisher runs on Pekko Streams and Pekko Connectors MQTT (Alpakka). The Pekko actor system is
+the runtime that carries the concurrency. Pekko Streams carries the data from generation to
+publishing, and its backpressure is what holds the rate steady. Logging goes through Pekko Logging
+with Logback.
 
-## 🚀 Scaling
+## Scaling
 
-Because each publisher generates its `device_name` dynamically using the system hostname, it is completely stateless and inherently scalable. You can easily simulate a massive fleet of sensors by scaling the service via Docker Compose:
+The publisher derives its `device_name` from the system hostname, so it holds no state of its own
+and scales by replication. Simulate a fleet of sensors by scaling the service with Docker Compose:
 
 ```bash
 docker compose up -d --scale publisher=100
 ```
 
-This will spin up 100 isolated sensor instances, all feeding data concurrently into the pipeline.
+That starts 100 isolated sensor instances, all feeding the pipeline at the same time.

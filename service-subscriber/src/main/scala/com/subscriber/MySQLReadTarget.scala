@@ -11,17 +11,17 @@ class MySQLReadTarget(dbUrl: String, dbUser: String, dbPass: String) extends Rea
     val props = new Properties()
     props.setProperty("user",     dbUser)
     props.setProperty("password", dbPass)
-    // Planned once rather than on every execution; without it the group measures the query planner.
+    // Planned once rather than on every execution. Without it the group measures the query planner.
     // Matches MySQLBatchTarget and the Erlang arm, which prepares at init.
     props.setProperty("useServerPrepStmts", "true")
     props.setProperty("cachePrepStmts",     "true")
     DriverManager.getConnection(dbUrl, props)
   }
 
-  // The MySQL spelling of the read group's query; see the read-group section of audit.md for why the
-  // window is bounded. NOW(6), not NOW(), to match the microsecond resolution of the Postgres now().
-  // Byte-identical to ?READ_SQL in db_read_backend_mysql.erl, or the group compares query plans
-  // instead of runtimes. The rule is per backend: this pair must match, not the TimescaleDB pair.
+  // The MySQL spelling of the read group's query: the same bounded window. NOW(6), not NOW(), to
+  // match the microsecond resolution of the Postgres now(). Byte-identical to ?READ_SQL in
+  // db_read_backend_mysql.erl, or the group compares query plans instead of runtimes, and the rule
+  // is per backend: this pair must match, not the TimescaleDB pair.
   private val readStmt: PreparedStatement = conn.prepareStatement(
     "SELECT avg(Value), count(*) FROM Data WHERE Timestamp > NOW(6) - INTERVAL 5 SECOND")
 

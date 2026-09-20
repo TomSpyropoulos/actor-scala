@@ -1,15 +1,13 @@
 package com.subscriber
 
 // The HTTP half of a reader: one Flux script, built once with the bucket interpolated. It owns no
-// connection, unlike the JDBC read targets; every reader shares the process-wide HttpClient
+// connection, unlike the JDBC read targets. Every reader shares the process-wide HttpClient
 class InfluxReadTarget extends ReadTarget {
 
-  // The InfluxDB spelling of the read group's query; see the read-group section of audit.md for why
-  // the window is bounded. group() and reduce are load-bearing for equivalence with the SQL
-  // backends' avg/count, and finding L records why.
-  //
-  // Byte-identical to ?READ_FLUX in db_read_backend_influxdb.erl, or the group compares query plans
-  // instead of runtimes. The rule is per backend: this pair must match each other, not a SQL pair.
+  // The InfluxDB spelling of the read group's query: the same bounded window. group() and reduce
+  // are load-bearing for equivalence with the SQL backends' avg/count. Byte-identical to ?READ_FLUX
+  // in db_read_backend_influxdb.erl, or the group compares query plans instead of runtimes, and the
+  // rule is per backend: this pair must match each other, not a SQL pair.
   private val flux: String = Seq(
     s"""from(bucket: "${InfluxDBBackend.bucket}")""",
     """  |> range(start: -5s)""",
@@ -28,6 +26,6 @@ class InfluxReadTarget extends ReadTarget {
     ()
   }
 
-  // Nothing to release; see InfluxBatchTarget.
+  // Nothing to release. See InfluxBatchTarget.
   def close(): Unit = ()
 }

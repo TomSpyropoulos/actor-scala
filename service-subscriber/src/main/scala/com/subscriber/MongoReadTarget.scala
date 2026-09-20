@@ -26,6 +26,6 @@ class MongoReadTarget extends ReadTarget {
     ()
   }
 
-  // Nothing to release; see MongoBatchTarget.
+  // Nothing to release. See MongoBatchTarget.
   def close(): Unit = ()
 }

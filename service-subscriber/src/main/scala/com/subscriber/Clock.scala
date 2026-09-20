@@ -3,7 +3,7 @@ package com.subscriber
 import java.time.{Instant, LocalDateTime, OffsetDateTime, ZoneOffset}
 import java.util.Date
 
-// The one microsecond stamp definition for the subscriber; reading a latency clock as millis anywhere
+// The one microsecond stamp definition for the subscriber. Reading a latency clock as millis anywhere
 // re-quantises the measurement. Erlang gets the same from os:system_time(microsecond) directly.
 object Clock {
   // Microseconds since the Unix epoch for an already-captured instant
