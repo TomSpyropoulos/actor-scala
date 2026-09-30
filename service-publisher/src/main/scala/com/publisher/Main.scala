@@ -31,7 +31,8 @@ object Main {
   def data(deviceName: String, paddingBytes: Int): String = {
     val timestampz = IsoMicros.format(Instant.now())
     val value = Random().nextInt(10) + 1
-    val padding = if (paddingBytes > 0) s""","padding":"${"x" * paddingBytes}"""" else ""
+    val padding =
+      if (paddingBytes > 0) s""","padding":"${"x" * paddingBytes}"""" else ""
     s"""{"device_name":"$deviceName","timestamp":"$timestampz","value":$value$padding}"""
   }
 
